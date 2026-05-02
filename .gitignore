@@ -1,0 +1,26 @@
+# Database
+.edda/
+edda.db
+
+# Generated output
+output/
+dashboard.html
+
+# Test / reference data files
+*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+src/*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
