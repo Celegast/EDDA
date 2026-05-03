@@ -528,6 +528,8 @@ def plot_sector_map_interactive(df: pd.DataFrame, out_path: Path | None,
         paper_bgcolor="#0a0a1a",
         font_color="white",
         width=1400, height=900,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
     )
 
     if out_path is None:
@@ -615,6 +617,8 @@ def plot_species_bubble_3d(df: pd.DataFrame, species: str,
         paper_bgcolor="#0a0a1a",
         font_color="white",
         width=1400, height=900,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
     )
 
     if out_path is None:
@@ -725,6 +729,8 @@ def plot_sector_valuable_map_interactive(
         paper_bgcolor="#0a0a1a",
         font_color="white",
         width=1400, height=900,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
     )
 
     if out_path is None:
