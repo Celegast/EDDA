@@ -29,12 +29,19 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 ## Installation
 
-**Windows (PowerShell):**
+**Windows (double-click or run in any terminal):**
+```bat
+setup.bat
+```
+
+**Windows (PowerShell — requires execution policy to be set):**
 ```powershell
 .\setup.ps1
 ```
+> If you see a script execution error, run it without changing system policy:
+> `powershell.exe -ExecutionPolicy Bypass -File .\setup.ps1`
 
-**Linux / macOS (Bash):**
+**Linux / macOS:**
 ```bash
 chmod +x setup.sh
 ./setup.sh
@@ -47,12 +54,19 @@ On Windows, the `edda-*` commands live inside `.venv\Scripts\`; on Linux/macOS t
 
 Run this once to pull the latest code, sync dependencies, re-import journals, and rebuild everything:
 
-**Windows (PowerShell):**
+**Windows (double-click or run in any terminal):**
+```bat
+update.bat
+```
+
+**Windows (PowerShell — requires execution policy to be set):**
 ```powershell
 .\update.ps1
 ```
+> If you see a script execution error, run it without changing system policy:
+> `powershell.exe -ExecutionPolicy Bypass -File .\update.ps1`
 
-**Linux / macOS (Bash):**
+**Linux / macOS:**
 ```bash
 ./update.sh
 ```
