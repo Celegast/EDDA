@@ -19,7 +19,8 @@ Write-Host "=== EDDA update ===" -ForegroundColor Yellow
 Step 1 6 "Pulling latest changes..."
 $hasGit = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 if ($hasGit -and (Test-Path ".git")) {
-    Run "git", "pull"
+    git pull
+    if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
 } elseif (-not $hasGit) {
     Write-Host "  git not found — skipping pull." -ForegroundColor DarkYellow
     Write-Host "  Download the latest release manually from the repository." -ForegroundColor DarkYellow
