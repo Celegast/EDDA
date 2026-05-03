@@ -21,6 +21,14 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_SQL)
+    for sql in (
+        "ALTER TABLE journal_files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE journal_files ADD COLUMN lines_processed INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
     conn.commit()
     return conn
 

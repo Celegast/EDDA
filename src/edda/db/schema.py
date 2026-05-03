@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS journal_files (
     id              INTEGER PRIMARY KEY,
     filename        TEXT    NOT NULL UNIQUE,
     processed_at    TEXT    NOT NULL,   -- ISO-8601
-    event_count     INTEGER NOT NULL DEFAULT 0
+    event_count     INTEGER NOT NULL DEFAULT 0,
+    file_size       INTEGER NOT NULL DEFAULT 0,  -- bytes at last import
+    lines_processed INTEGER NOT NULL DEFAULT 0   -- total lines read (resume offset)
 );
 
 -- One row per unique star system visited.
