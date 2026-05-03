@@ -831,6 +831,10 @@ def nearby_helium_boxels(
         (df["z"] - cz) ** 2
     ).pow(0.5)
 
+    nearest = (
+        df.loc[df.groupby("boxel")["dist"].idxmin(), ["boxel", "system_name"]]
+        .set_index("boxel")["system_name"]
+    )
     grp = (
         df.groupby("boxel")
         .agg(
@@ -842,6 +846,7 @@ def nearby_helium_boxels(
         )
         .reset_index()
     )
+    grp["nearest_system"] = grp["boxel"].map(nearest)
     return (
         grp[
             (grp["gg_count"] >= min_ggs) &
@@ -896,6 +901,10 @@ def nearby_tectonicas_boxels(
         (df["x"] - cx) ** 2 + (df["y"] - cy) ** 2 + (df["z"] - cz) ** 2
     ).pow(0.5)
 
+    nearest = (
+        df.loc[df.groupby("boxel")["dist"].idxmin(), ["boxel", "system_name"]]
+        .set_index("boxel")["system_name"]
+    )
     grp = (
         df.groupby("boxel")
         .agg(
@@ -905,6 +914,7 @@ def nearby_tectonicas_boxels(
         )
         .reset_index()
     )
+    grp["nearest_system"] = grp["boxel"].map(nearest)
 
     in_range = grp["he_mean"].apply(
         lambda he: any(lo <= he <= hi for lo, hi in _TECTONICAS_HE_RANGES)
@@ -959,6 +969,10 @@ def nearby_high_value_boxels(
         (df["x"] - cx) ** 2 + (df["y"] - cy) ** 2 + (df["z"] - cz) ** 2
     ).pow(0.5)
 
+    nearest = (
+        df.loc[df.groupby("boxel")["dist"].idxmin(), ["boxel", "system_name"]]
+        .set_index("boxel")["system_name"]
+    )
     grp = (
         df.groupby("boxel")
         .agg(
@@ -968,6 +982,7 @@ def nearby_high_value_boxels(
         )
         .reset_index()
     )
+    grp["nearest_system"] = grp["boxel"].map(nearest)
 
     in_range = grp["he_mean"].apply(
         lambda he: any(lo <= he <= hi for lo, hi in _HIGH_VALUE_HE_RANGES)
