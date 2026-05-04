@@ -129,9 +129,13 @@ def top_species(conn: sqlite3.Connection, n: int = 20) -> pd.DataFrame:
     sql = """
         SELECT sc.species_localised AS species,
                COUNT(*) AS scans,
-               COALESCE(SUM(os.total), 0) AS total_credits
+               COALESCE(sal.total_credits, 0) AS total_credits
         FROM organic_scans sc
-        LEFT JOIN organic_sales os ON os.species = sc.species
+        LEFT JOIN (
+            SELECT species, SUM(total) AS total_credits
+            FROM organic_sales
+            GROUP BY species
+        ) sal ON sal.species = sc.species
         WHERE sc.scan_state = 'Analyse'
         GROUP BY sc.species
         ORDER BY scans DESC
