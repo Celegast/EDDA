@@ -17,17 +17,19 @@ if not defined PYTHON (
 if not defined PYTHON (
     echo Error: Python 3.12 or newer not found.
     echo Install it from https://www.python.org/downloads/
+    pause
     exit /b 1
 )
 
 echo Creating virtual environment...
 %PYTHON% -m venv .venv
-if errorlevel 1 ( echo Failed to create .venv & exit /b 1 )
+if errorlevel 1 ( echo Failed to create .venv & pause & exit /b 1 )
 
 echo Installing EDDA...
 .venv\Scripts\pip install -e . --quiet
-if errorlevel 1 ( echo Installation failed & exit /b 1 )
+if errorlevel 1 ( echo Installation failed & pause & exit /b 1 )
 
 echo.
 echo Done. Run update.bat to import journals and build the dashboard.
 endlocal
+pause

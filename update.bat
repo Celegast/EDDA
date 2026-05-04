@@ -19,7 +19,7 @@ if not exist .git (
     goto step2
 )
 git pull
-if errorlevel 1 ( echo git pull failed & exit /b 1 )
+if errorlevel 1 ( echo git pull failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
 :: Step 2: Virtual environment
@@ -45,11 +45,12 @@ if not defined PYTHON (
 if not defined PYTHON (
     echo Error: Python 3.12 or newer not found.
     echo Install it from https://www.python.org/downloads/
+    pause
     exit /b 1
 )
 
 %PYTHON% -m venv .venv
-if errorlevel 1 ( echo Failed to create .venv & exit /b 1 )
+if errorlevel 1 ( echo Failed to create .venv & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
 :: Step 3: Install / sync dependencies
@@ -58,7 +59,7 @@ if errorlevel 1 ( echo Failed to create .venv & exit /b 1 )
 echo.
 echo [3/6] Installing current version...
 .venv\Scripts\pip install -e . --quiet
-if errorlevel 1 ( echo Installation failed & exit /b 1 )
+if errorlevel 1 ( echo Installation failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
 :: Step 4: Import journal data
@@ -66,7 +67,7 @@ if errorlevel 1 ( echo Installation failed & exit /b 1 )
 echo.
 echo [4/6] Importing journal data...
 .venv\Scripts\edda-import
-if errorlevel 1 ( echo Import failed & exit /b 1 )
+if errorlevel 1 ( echo Import failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
 :: Step 5: Rebuild maps and charts
@@ -74,9 +75,9 @@ if errorlevel 1 ( echo Import failed & exit /b 1 )
 echo.
 echo [5/6] Rebuilding maps and charts...
 .venv\Scripts\edda-map
-if errorlevel 1 ( echo Map build failed & exit /b 1 )
+if errorlevel 1 ( echo Map build failed & pause & exit /b 1 )
 .venv\Scripts\edda-charts
-if errorlevel 1 ( echo Chart build failed & exit /b 1 )
+if errorlevel 1 ( echo Chart build failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
 :: Step 6: Rebuild dashboard
@@ -84,8 +85,9 @@ if errorlevel 1 ( echo Chart build failed & exit /b 1 )
 echo.
 echo [6/6] Rebuilding dashboard...
 .venv\Scripts\edda-dashboard
-if errorlevel 1 ( echo Dashboard build failed & exit /b 1 )
+if errorlevel 1 ( echo Dashboard build failed & pause & exit /b 1 )
 
 echo.
 echo Done.  Open dashboard.html in a browser.
 endlocal
+pause
