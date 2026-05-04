@@ -4,7 +4,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 ## Features
 
-- **Journal importer** — incrementally processes Elite Dangerous journal files; idempotent re-runs skip already-imported files
+- **Journal importer** — incrementally processes Elite Dangerous journal files; resumes partially-imported files (e.g. when the game was open during import) without duplicating data; idempotent re-runs skip already-imported files
 - **Exploration statistics** — system counts, jump distance, first discoveries, mapping stats
 - **Trip report** — scoped statistics for a date range, useful for comparing expedition results against tools like Elite Observatory
 - **Galaxy maps** — interactive 3D Plotly maps oriented with Sol in front and Colonia to the left, scaled to true in-game galaxy dimensions; static PNG variants for density, bio signals, and first discoveries
@@ -12,9 +12,9 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Valuable regions** — rate-normalised sector maps showing ELW, Water World, terraformable, and bio-signal density per visited system; galactic-height (Y) correlation charts; star-class correlation charts
 - **Exobiology charts** — species distribution, value breakdown by planet type, 3D species bubble maps, and a He% vs Stratum Tectonicas probability chart (mirrors the community "Boxel Helium vs Tectonicas" chart)
 - **Boxel analytics** — He% vs average system exploration value chart; identifies He% ranges associated with high-value boxels (>3.5 MCr average)
-- **Body value catalogue** — per-body estimated exploration credit value using the Odyssey credit formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds
-- **Star-class catalogue** — per-star-class body count and bio-signal statistics
-- **Personal Records** — top-10 lists for most bodies per system, most bio signals, top exobiology value, and top exploration value; all tables show distance to current commander position
+- **Body value catalogue** — per-body estimated exploration credit value using the Odyssey credit formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds; property ranges (min/avg/max with body names) and most-of-type-in-system records per planet type
+- **Star-class catalogue** — per-star-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and body names; most-of-class-in-system records
+- **Personal Records** — top-10 lists for most bodies, most stars, most bio signals, top exobiology value, and top exploration value per system; all tables show distance to current commander position
 - **Vicinity Hints** — automatically surfaces interesting boxels within 5,000 ly of the commander's current position:
   - *Potential helium-rich boxel* — mean He% above 28.5% with ≥3 gas giants
   - *Potential Stratum Tectonicas boxel* — He% in community-identified sweet spots (24.2–24.5% or 25.9–26.5%)
@@ -206,16 +206,16 @@ The dashboard sections:
 | Section | Contents |
 |---|---|
 | Overview | Key lifetime counts and Vicinity Hints (helium-rich, Tectonicas, and high-value boxels within 5,000 ly) |
-| Personal Records | Top-10 tables for most bodies, most bio signals, top exobiology value, top exploration value; Miscellaneous personal bests |
+| Personal Records | Top-10 tables for most bodies, most stars, most bio signals, top exobiology value, top exploration value; Miscellaneous personal bests |
 | Galaxy Maps | Interactive 3D views (all systems, bio signals, first discoveries) and static PNG maps |
 | Sector Map | Interactive 3D sector cube density map |
 | Valuable Regions | Rate-normalised sector maps; body rates vs galactic height and star class; top sectors table |
 | Bodies | Planet-type and star-class charts; body value breakdown; He% vs average system value line chart |
-| Exobiology | Species scan log, value breakdown by species and planet type, 3D species bubble maps, He% vs Stratum Tectonicas probability chart |
+| Exobiology | Species scan log, value breakdown by species and planet type, interactive genus × planet-type heatmap with row/column totals, 3D species bubble maps, He% vs Stratum Tectonicas probability chart |
 | Income & Travel | Cumulative exploration and exobiology credits; jump distance histogram |
 | Species Catalogue | Per-species scan counts, first-log tracking, estimated and actual sale values, with planet-type breakdown |
-| Body-type Catalogue | Per-type totals with first-discovery and mapping stats; sortable detail table with distance to commander |
-| Star-class Catalogue | Per-star-class system and body statistics; sortable detail table with distance to commander |
+| Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure) with min/avg/max and body names; most bodies of that type in one system; sortable detail table with distance to commander |
+| Star-class Catalogue | Per-star-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
 
 ## Vicinity Hints
 
@@ -239,7 +239,7 @@ The SQLite database lives at `.edda/ed.db` (created automatically on first impor
 |---|---|
 | `systems` | Every visited star system with galactic coordinates and primary star class |
 | `jumps` | Every FSD jump in chronological order with distance and fuel data |
-| `bodies` | All scanned bodies with physical properties, first-discovery/mapping flags, and helium percentage (`atmosphere_he_pct`) for gas giants |
+| `bodies` | All scanned bodies with physical properties (including `age_my` and `mass_em` in solar units for stars), first-discovery/mapping flags, and helium percentage (`atmosphere_he_pct`) for gas giants |
 | `bio_signals` | Biological signal genus entries per body from DSS probing |
 | `organic_scans` | Individual organism scan events (Log / Sample / Analyse states) |
 | `organic_sales` | Vista Genomics sale records with first-log bonus tracking |
