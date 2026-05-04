@@ -744,6 +744,28 @@ def _top_bio_table_html(df: pd.DataFrame, cur_pos: dict | None) -> str:
     )
 
 
+def _top_stars_table_html(df: pd.DataFrame, cur_pos: dict | None) -> str:
+    if df.empty:
+        return '<p class="empty-note">No data.</p>'
+    dist_th = "<th>Distance</th>" if cur_pos else ""
+    rows = []
+    for _, r in df.iterrows():
+        d = _dist_ly(cur_pos, r.get("x"), r.get("y"), r.get("z"))
+        rows.append(
+            f"<tr><td>{r['name']}</td>"
+            f'<td class="num" data-sort="{int(r["star_count"])}">{int(r["star_count"]):,}</td>'
+            f'<td class="num" data-sort="{int(r["star_classes"])}">{int(r["star_classes"]):,}</td>'
+            f'<td class="num" data-sort="{int(r["first_disc"])}">{int(r["first_disc"]):,}</td>'
+            + (_dist_td(d) if cur_pos else "")
+            + "</tr>"
+        )
+    return (
+        '<div class="table-wrap"><table class="detail-table sortable"><thead>'
+        f"<tr><th>System</th><th>Stars</th><th>Classes</th><th>1st disc.</th>{dist_th}</tr>"
+        f'</thead><tbody>{"".join(rows)}</tbody></table></div>'
+    )
+
+
 def _top_exobio_table_html(df: pd.DataFrame, cur_pos: dict | None) -> str:
     if df.empty:
         return '<p class="empty-note">No organic scan data.</p>'
@@ -1249,10 +1271,12 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     df_top_bio    = st.top_systems_by_bio(conn)
     df_top_exobio = st.top_systems_by_exobio_value(conn)
     df_top_explor = st.top_systems_by_exploration_value(conn)
+    df_top_stars  = st.top_systems_by_stars(conn)
     sections.append(_section("records", "Personal Records",
         _tab_group("records", [
             ("Miscellaneous",    _records_table_html(records)),
             ("Most Bodies",      _top_bodies_table_html(df_top_bodies, cur_pos)),
+            ("Most Stars",       _top_stars_table_html(df_top_stars, cur_pos)),
             ("Most Bio Signals", _top_bio_table_html(df_top_bio, cur_pos)),
             ("Top Exobiology",   _top_exobio_table_html(df_top_exobio, cur_pos)),
             ("Top Exploration",  _top_explor_table_html(df_top_explor, cur_pos)),

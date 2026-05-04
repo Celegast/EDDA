@@ -709,6 +709,24 @@ def top_systems_by_exploration_value(conn: sqlite3.Connection, n: int = 10) -> p
     return grp[["name", "x", "y", "z", "body_count", "total_value"]]
 
 
+def top_systems_by_stars(conn: sqlite3.Connection, n: int = 10) -> pd.DataFrame:
+    """Top n systems by number of scanned stars."""
+    sql = """
+        SELECT s.name, s.x, s.y, s.z,
+               COUNT(DISTINCT b.body_id)                              AS star_count,
+               COUNT(DISTINCT b.subtype)                              AS star_classes,
+               SUM(CASE WHEN b.first_discovered=1 THEN 1 ELSE 0 END) AS first_disc
+        FROM systems s
+        JOIN bodies b ON b.system_address = s.system_address
+        WHERE b.body_type = 'Star'
+          AND s.x IS NOT NULL
+        GROUP BY s.system_address
+        ORDER BY star_count DESC
+        LIMIT ?
+    """
+    return pd.read_sql_query(sql, conn, params=(n,))
+
+
 def boxel_he_vs_value(
     conn: sqlite3.Connection,
     min_systems: int = 5,
