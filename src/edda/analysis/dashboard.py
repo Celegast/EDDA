@@ -1386,7 +1386,6 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         ("Income by Species",   _plotly(ch.plot_organic_value_by_species_interactive(df_oval, None))),
         ("Genus × Planet Type", _plotly(ch.plot_species_planet_heatmap_interactive(df_sxp, None))),
         ("By Planet (static)",  _img(ch.plot_organic_value_by_planet_type_static(df_oval, None))),
-        ("Heatmap (static)",    _img(ch.plot_species_planet_heatmap_static(df_sxp, None))),
     ] + bubble_tabs
     if _fig_tec_he is not None:
         exobio_tabs.append(("He% vs Tectonicas", _plotly(_fig_tec_he)))

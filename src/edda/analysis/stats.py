@@ -153,6 +153,8 @@ def species_by_planet_type(conn: sqlite3.Connection) -> pd.DataFrame:
         FROM organic_scans sc
         JOIN bodies b ON b.system_address = sc.system_address AND b.body_id = sc.body_id
         WHERE sc.scan_state = 'Analyse'
+          AND sc.genus_localised IS NOT NULL
+          AND b.subtype IS NOT NULL
         GROUP BY b.subtype, sc.genus_localised
         ORDER BY scan_count DESC
     """

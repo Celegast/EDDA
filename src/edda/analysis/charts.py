@@ -273,14 +273,16 @@ def plot_species_planet_heatmap_static(df: pd.DataFrame,
     if pivot.empty:
         return None
     fig, ax = plt.subplots(figsize=(max(10, len(pivot.columns) * 1.2),
-                                    max(4, len(pivot) * 0.6)))
+                                    max(4, len(pivot) * 0.9)))
     sns.heatmap(pivot.astype(int), ax=ax, cmap="YlGn", linewidths=0.3,
                 linecolor="#0f0f2a", annot=True, fmt="d",
-                cbar_kws={"label": "Scans"})
+                cbar_kws={"label": "Scans"},
+                yticklabels=True)
     ax.set_title("Genus × Planet Type Heatmap")
     ax.set_xlabel("Planet type")
     ax.set_ylabel("Genus")
     plt.setp(ax.get_xticklabels(), rotation=40, ha="right", fontsize=7)
+    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=7)
     if out_path is None:
         return _fig_to_b64(fig)
     _save_static(fig, out_path)
@@ -295,10 +297,67 @@ def plot_species_planet_heatmap_interactive(df: pd.DataFrame,
                            values="scan_count", fill_value=0)
     if pivot.empty:
         return None
-    fig = px.imshow(pivot, color_continuous_scale="YlGn", aspect="auto",
-                    title="Genus × Planet Type Heatmap", text_auto=True)
-    fig.update_layout(paper_bgcolor="#0a0a1a", plot_bgcolor="#0f0f2a",
-                      font_color="white")
+
+    n_rows, n_cols = pivot.shape
+    y_labels = list(pivot.index) + ["Total"]
+    x_labels = list(pivot.columns) + ["Total"]
+
+    z_full = np.zeros((n_rows + 1, n_cols + 1), dtype=int)
+    z_full[:n_rows, :n_cols] = pivot.values
+    z_full[:n_rows, n_cols] = pivot.sum(axis=1).values
+    z_full[n_rows, :n_cols] = pivot.sum(axis=0).values
+    z_full[n_rows, n_cols] = int(pivot.values.sum())
+
+    # Data cells only (NaN out the Total row/column)
+    z_data = z_full.astype(float)
+    z_data[n_rows, :] = np.nan
+    z_data[:, n_cols] = np.nan
+
+    # Total cells only (NaN out the data cells)
+    z_totals = np.full((n_rows + 1, n_cols + 1), np.nan)
+    z_totals[n_rows, :] = z_full[n_rows, :]
+    z_totals[:, n_cols] = z_full[:, n_cols]
+
+    data_max = int(pivot.values.max())
+
+    # Per-cell text colour: white on dark cells, near-black on light cells
+    annotations = []
+    for i, y_lbl in enumerate(y_labels):
+        for j, x_lbl in enumerate(x_labels):
+            val = z_full[i, j]
+            is_total = (i == n_rows or j == n_cols)
+            color = "white" if (is_total or val > data_max * 0.5) else "#111111"
+            annotations.append(dict(
+                x=x_lbl, y=y_lbl, text=str(val),
+                showarrow=False, font=dict(size=13, color=color),
+                xref="x", yref="y",
+            ))
+
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(
+        z=z_data, x=x_labels, y=y_labels,
+        customdata=z_full,
+        colorscale="YlGn", zmin=0, zmax=data_max,
+        colorbar=dict(title=dict(text="Scans", font=dict(color="white")),
+                      tickfont=dict(color="white")),
+        hovertemplate="Genus: %{y}<br>Planet: %{x}<br>Scans: %{customdata}<extra></extra>",
+    ))
+    fig.add_trace(go.Heatmap(
+        z=z_totals, x=x_labels, y=y_labels,
+        colorscale=[[0, "#3a3a5a"], [1, "#3a3a5a"]],
+        showscale=False,
+        hoverinfo="skip",
+    ))
+
+    fig.update_layout(
+        title="Genus × Planet Type Heatmap",
+        paper_bgcolor="#0a0a1a", plot_bgcolor="#0f0f2a", font_color="white",
+        height=max(400, (n_rows + 1) * 35 + 150),
+        annotations=annotations,
+    )
+    fig.update_yaxes(autorange="reversed", tickmode="array",
+                     tickvals=list(range(n_rows + 1)), ticktext=y_labels)
+
     if out_path is None:
         return fig
     _write_interactive(fig, out_path)
