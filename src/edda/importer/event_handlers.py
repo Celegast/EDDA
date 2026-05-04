@@ -137,7 +137,8 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
         "subtype":           subtype,
         "distance_ls":       event.get("DistanceFromArrivalLS"),
         "radius_km":         event.get("Radius", 0) / 1000.0 if event.get("Radius") else None,
-        "mass_em":           event.get("MassEM"),
+        "mass_em":           event.get("StellarMass") if body_type == "Star" else event.get("MassEM"),
+        "age_my":            event.get("Age_MY") if body_type == "Star" else None,
         "surface_gravity_g": event.get("SurfaceGravity", 0) / 9.80665 if event.get("SurfaceGravity") else None,
         "surface_temp_k":    event.get("SurfaceTemperature"),
         "surface_pressure":  event.get("SurfacePressure"),
@@ -158,14 +159,14 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
     conn.execute("""
         INSERT INTO bodies (
             system_address, body_id, name, body_type, subtype,
-            distance_ls, radius_km, mass_em, surface_gravity_g,
+            distance_ls, radius_km, mass_em, age_my, surface_gravity_g,
             surface_temp_k, surface_pressure, atmosphere_type,
             atmosphere_density, atmosphere_he_pct, volcanism, is_landable,
             terraform_state, bio_signals, geo_signals,
             was_mapped, first_discovered, first_mapped, scanned_at
         ) VALUES (
             :system_address, :body_id, :name, :body_type, :subtype,
-            :distance_ls, :radius_km, :mass_em, :surface_gravity_g,
+            :distance_ls, :radius_km, :mass_em, :age_my, :surface_gravity_g,
             :surface_temp_k, :surface_pressure, :atmosphere_type,
             :atmosphere_density, :atmosphere_he_pct, :volcanism, :is_landable,
             :terraform_state, :bio_signals, :geo_signals,
@@ -176,6 +177,7 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             distance_ls        = COALESCE(excluded.distance_ls, bodies.distance_ls),
             radius_km          = COALESCE(excluded.radius_km, bodies.radius_km),
             mass_em            = COALESCE(excluded.mass_em, bodies.mass_em),
+            age_my             = COALESCE(excluded.age_my, bodies.age_my),
             surface_gravity_g  = COALESCE(excluded.surface_gravity_g, bodies.surface_gravity_g),
             surface_temp_k     = COALESCE(excluded.surface_temp_k, bodies.surface_temp_k),
             surface_pressure   = COALESCE(excluded.surface_pressure, bodies.surface_pressure),

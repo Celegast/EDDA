@@ -449,6 +449,8 @@ def body_values_table(conn: sqlite3.Connection) -> pd.DataFrame:
                b.is_landable,
                b.surface_gravity_g,
                b.surface_temp_k,
+               b.surface_pressure,
+               b.radius_km,
                b.scanned_at,
                s.name           AS system_name,
                s.x, s.y, s.z
@@ -607,6 +609,21 @@ def star_class_system_details(conn: sqlite3.Connection) -> pd.DataFrame:
         WHERE s.star_class IS NOT NULL
         GROUP BY s.system_address, s.name, s.star_class
         ORDER BY s.star_class, body_count DESC
+    """
+    return pd.read_sql_query(sql, conn)
+
+
+def star_body_details(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Per-star-body physical properties for records display in star-class catalogue."""
+    sql = """
+        SELECT b.name, b.subtype AS star_class,
+               b.mass_em, b.age_my, b.radius_km, b.surface_temp_k,
+               b.first_discovered,
+               s.name AS system_name, s.x, s.y, s.z
+        FROM bodies b
+        JOIN systems s ON s.system_address = b.system_address
+        WHERE b.body_type = 'Star'
+          AND b.subtype IS NOT NULL
     """
     return pd.read_sql_query(sql, conn)
 

@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS bodies (
     subtype             TEXT,                       -- e.g. 'High metal content body'
     distance_ls         REAL,
     radius_km           REAL,
-    mass_em             REAL,                       -- Earth masses (planets)
+    mass_em             REAL,                       -- Earth masses (planets) / Solar masses (stars)
+    age_my              REAL,                       -- Age in million years (stars only)
     surface_gravity_g   REAL,
     surface_temp_k      REAL,
     surface_pressure    REAL,

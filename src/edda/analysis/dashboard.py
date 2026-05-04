@@ -357,6 +357,10 @@ section h2 {
 .check { color: #44cc88; }
 
 .sub-head { color: #aabbdd; font-size: 0.95em; margin: 18px 0 8px; }
+.body-hint { display: block; font-size: 0.75em; color: #ffffff; font-weight: normal; margin-top: 2px; }
+.detail-table .hint-col     { color: #ccddee; vertical-align: middle; }
+.detail-table .hint-col-min { color: #ccddee; vertical-align: middle; text-align: right; }
+.detail-table .num-center   { text-align: center; }
 
 /* ---- Overview button in detail lists ---- */
 .detail-overview-btn {
@@ -1104,36 +1108,54 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None) -> s
             ("Avg est. value",  _fmt_cr(avg_val)),
         ])
 
-        # Property ranges
+        # Property ranges with min/max body names
+        grp = grp.copy()
+        grp["surface_pressure_atm"] = grp["surface_pressure"] / 101325.0
+
         prop_rows = []
         for col, lbl, fmt in [
-            ("surface_gravity_g", "Gravity (g)",    "{:.3f}"),
-            ("surface_temp_k",    "Temperature (K)","{:.0f}"),
-            ("radius_km",         "Radius (km)",    "{:.0f}"),
-            ("mass_em",           "Mass (Earth=1)", "{:.3f}"),
+            ("surface_gravity_g",   "Gravity (g)",              "{:.3f}"),
+            ("surface_temp_k",      "Surface temperature (K)",  "{:.0f}"),
+            ("radius_km",           "Radius (km)",              "{:,.0f}"),
+            ("mass_em",             "Earth masses",             "{:.4f}"),
+            ("surface_pressure_atm","Surface pressure (atm)",   "{:.4f}"),
         ]:
             if col not in grp.columns:
                 continue
-            valid = grp[col].dropna()
-            valid = valid[valid > 0]
+            valid = grp[[col, "name"]].dropna(subset=[col])
+            valid = valid[valid[col] > 0]
             if len(valid) < 2:
                 continue
+            idx_min = valid[col].idxmin()
+            idx_max = valid[col].idxmax()
             prop_rows.append(
                 f"<tr><td>{lbl}</td>"
-                f'<td class="num">{fmt.format(valid.min())}</td>'
-                f'<td class="num">{fmt.format(valid.mean())}</td>'
-                f'<td class="num">{fmt.format(valid.max())}</td></tr>'
+                f'<td class="hint-col-min">{valid.loc[idx_min, "name"]}</td>'
+                f'<td class="num num-center">{fmt.format(valid.loc[idx_min, col])}</td>'
+                f'<td class="num num-center">{fmt.format(valid[col].mean())}</td>'
+                f'<td class="num num-center">{fmt.format(valid.loc[idx_max, col])}</td>'
+                f'<td class="hint-col">{valid.loc[idx_max, "name"]}</td></tr>'
             )
 
-        prop_block = ""
-        if prop_rows:
-            prop_block = (
-                '<p class="sub-head">Property Ranges</p>'
-                '<div class="table-wrap" style="max-width:480px">'
-                '<table class="detail-table"><thead>'
-                "<tr><th>Property</th><th>Min</th><th>Avg</th><th>Max</th></tr>"
-                f'</thead><tbody>{"".join(prop_rows)}</tbody></table></div>'
-            )
+        sys_counts = grp.groupby("system_name").size()
+        top_sys = sys_counts.idxmax()
+        prop_rows.append(
+            f"<tr><td>Most in system</td>"
+            f'<td class="hint-col-min"></td><td class="num num-center"></td><td class="num num-center"></td>'
+            f'<td class="num">{int(sys_counts.max())}</td>'
+            f'<td class="hint-col">{top_sys}</td></tr>'
+        )
+
+        _vw = "width:90px;text-align:center"
+        prop_block = (
+            '<p class="sub-head">Property Ranges</p>'
+            '<div class="table-wrap">'
+            '<table class="detail-table"><thead>'
+            f'<tr><th>Property</th><th></th>'
+            f'<th style="{_vw}">Min</th><th style="{_vw}">Avg</th><th style="{_vw}">Max</th>'
+            f'<th></th></tr>'
+            f'</thead><tbody>{"".join(prop_rows)}</tbody></table></div>'
+        )
 
         # Top 25 bodies by estimated value
         top = grp.nlargest(25, "estimated_value")
@@ -1177,9 +1199,15 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None) -> s
 # Star-class catalogue
 # ---------------------------------------------------------------------------
 
-def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None) -> str:
+def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
+                        star_body_df: pd.DataFrame | None = None) -> str:
     if star_df.empty:
         return '<p class="empty-note">No star data available.</p>'
+
+    body_by_class: dict = {}
+    if star_body_df is not None and not star_body_df.empty:
+        for sc, grp in star_body_df.groupby("star_class", sort=False):
+            body_by_class[sc] = grp
 
     list_items = []
     panels: dict[str, str] = {}
@@ -1228,7 +1256,55 @@ def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None) -> s
             f'</thead><tbody>{"".join(top_rows)}</tbody></table></div>'
         )
 
-        panels[panel_id] = card + top_block
+        star_prop_block = ""
+        if star_class in body_by_class:
+            _SOL_R = 695_700.0
+            sbg = body_by_class[star_class].copy()
+            if "radius_km" in sbg.columns:
+                sbg["radius_sr"] = sbg["radius_km"] / _SOL_R
+            star_prop_rows = []
+            for col, lbl, fmt in [
+                ("surface_temp_k", "Surface temperature (K)", "{:.0f}"),
+                ("radius_sr",      "Solar radius",            "{:.4f}"),
+                ("mass_em",        "Solar masses",            "{:.4f}"),
+                ("age_my",         "Age (million years)",     "{:,.0f}"),
+            ]:
+                if col not in sbg.columns:
+                    continue
+                valid = sbg[[col, "name"]].dropna(subset=[col])
+                valid = valid[valid[col] > 0]
+                if len(valid) < 2:
+                    continue
+                idx_min = valid[col].idxmin()
+                idx_max = valid[col].idxmax()
+                star_prop_rows.append(
+                    f"<tr><td>{lbl}</td>"
+                    f'<td class="hint-col-min">{valid.loc[idx_min, "name"]}</td>'
+                    f'<td class="num num-center">{fmt.format(valid.loc[idx_min, col])}</td>'
+                    f'<td class="num num-center">{fmt.format(valid[col].mean())}</td>'
+                    f'<td class="num num-center">{fmt.format(valid.loc[idx_max, col])}</td>'
+                    f'<td class="hint-col">{valid.loc[idx_max, "name"]}</td></tr>'
+                )
+            sys_counts = sbg.groupby("system_name").size()
+            top_sys = sys_counts.idxmax()
+            star_prop_rows.append(
+                f"<tr><td>Most in system</td>"
+                f'<td class="hint-col-min"></td><td class="num num-center"></td><td class="num num-center"></td>'
+                f'<td class="num">{int(sys_counts.max())}</td>'
+                f'<td class="hint-col">{top_sys}</td></tr>'
+            )
+            _vw = "width:90px;text-align:center"
+            star_prop_block = (
+                '<p class="sub-head">Property Ranges</p>'
+                '<div class="table-wrap">'
+                '<table class="detail-table"><thead>'
+                f'<tr><th>Property</th><th></th>'
+                f'<th style="{_vw}">Min</th><th style="{_vw}">Avg</th><th style="{_vw}">Max</th>'
+                f'<th></th></tr>'
+                f'</thead><tbody>{"".join(star_prop_rows)}</tbody></table></div>'
+            )
+
+        panels[panel_id] = card + star_prop_block + top_block
 
     def _panel(label, panel_id, is_first):
         active = " active" if is_first else ""
@@ -1455,9 +1531,10 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     # Star-class Catalogue
     # ------------------------------------------------------------------
     print("  Star-class catalogue...")
-    df_star = st.star_class_system_details(conn)
+    df_star      = st.star_class_system_details(conn)
+    df_star_body = st.star_body_details(conn)
     sections.append(_section("star-cat", "Star-class Catalogue",
-        _build_star_section(df_star, cur_pos)
+        _build_star_section(df_star, cur_pos, df_star_body)
     ))
 
     # ------------------------------------------------------------------

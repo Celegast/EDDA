@@ -24,6 +24,7 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     for sql in (
         "ALTER TABLE journal_files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE journal_files ADD COLUMN lines_processed INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE bodies ADD COLUMN age_my REAL",
     ):
         try:
             conn.execute(sql)
