@@ -14,7 +14,6 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
 
 from .event_handlers import HANDLERS
 
@@ -47,6 +46,9 @@ def process_file(path: Path, conn: sqlite3.Connection,
     """
     Process one journal file starting at line skip_lines.
 
+    Each parsed event is dispatched to its structured handler (if one exists in
+    HANDLERS). Unknown event types are silently skipped.
+
     Returns (events_handled, total_lines_in_file).
     The caller is responsible for updating journal_files.
     """
@@ -68,11 +70,12 @@ def process_file(path: Path, conn: sqlite3.Connection,
             except json.JSONDecodeError:
                 continue
 
-            handler = HANDLERS.get(event.get("event"))
+            event_type = event.get("event", "")
+            handler = HANDLERS.get(event_type)
             if handler:
                 handler(event, conn)
-                event_count += 1
 
+            event_count += 1
             pending += 1
             if pending >= COMMIT_EVERY:
                 conn.execute("COMMIT")

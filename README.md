@@ -134,7 +134,33 @@ edda-import [--journal-dir DIR] [--db PATH] [--force] [--quiet]
 | `--force` | Re-process files that were already imported |
 | `--quiet` | Suppress per-file progress output |
 
-Handled journal events: `FSDJump`, `Location`, `Scan`, `FSSBodySignals`, `SAASignalsFound`, `SAAScanComplete`, `ScanOrganic`, `SellOrganicData`, `CodexEntry`, `MultiSellExplorationData`, `Rank`, `LoadGame`.
+Handled journal events:
+
+| Event | Stored in |
+|---|---|
+| `FSDJump` | `systems`, `jumps` |
+| `Location` | `systems` |
+| `Scan` | `bodies`, `systems` |
+| `DiscoveryScan` | `systems.total_bodies` |
+| `FSSBodySignals` | `bio_signals` |
+| `FSSAllBodiesFound` | `systems.fss_complete` |
+| `FSSSignalDiscovered` | `fss_signals` |
+| `SAASignalsFound` | `bio_signals` |
+| `SAAScanComplete` | `bodies.was_mapped` |
+| `ScanBaryCentre` | `barycentres` |
+| `ScanOrganic` | `organic_scans` |
+| `SellOrganicData` | `organic_sales` |
+| `CodexEntry` | `codex_entries` |
+| `SellExplorationData` | `exploration_sales` |
+| `MultiSellExplorationData` | `exploration_sales` |
+| `MissionCompleted` | `missions` |
+| `PowerplayMerits` | `powerplay_merits` |
+| `Statistics` | `statistics_snapshots` |
+| `Rank` | `commander_snapshots` |
+| `Promotion` | `commander_snapshots` |
+| `LoadGame` | `commander_snapshots` |
+
+All other event types are silently ignored. If a journal file contains an event type not in the handled list and not in the known-ignored list, a warning is printed at the end of the import — this indicates a new game event that may be worth handling.
 
 ### `edda-stats`
 
@@ -237,7 +263,7 @@ The SQLite database lives at `.edda/ed.db` (created automatically on first impor
 
 | Table | Contents |
 |---|---|
-| `systems` | Every visited star system with galactic coordinates and primary star class |
+| `systems` | Every visited star system with galactic coordinates, primary star class, total body count, and FSS-complete flag |
 | `jumps` | Every FSD jump in chronological order with distance and fuel data |
 | `bodies` | All scanned bodies with physical properties (including `age_my` and `mass_em` in solar units for stars), first-discovery/mapping flags, and helium percentage (`atmosphere_he_pct`) for gas giants |
 | `bio_signals` | Biological signal genus entries per body from DSS probing |
@@ -245,7 +271,12 @@ The SQLite database lives at `.edda/ed.db` (created automatically on first impor
 | `organic_sales` | Vista Genomics sale records with first-log bonus tracking |
 | `exploration_sales` | Cartography data sale records |
 | `codex_entries` | Codex discoveries, flagged if first in region |
-| `commander_snapshots` | Credit and rank snapshots per session start |
+| `fss_signals` | Every unique signal discovered during FSS scanning (stations, installations, fleet carriers, beacons, etc.) |
+| `barycentres` | Orbital parameters for barycentre bodies (ScanBaryCentre events) |
+| `missions` | Completed missions with faction, type, destination, and credit reward |
+| `powerplay_merits` | Powerplay merit gain events with running total per power |
+| `commander_snapshots` | Credit and rank snapshots per session start and on rank-up |
+| `statistics_snapshots` | Periodic game-reported commander statistics (exploration profits, jumps, distance, exobiology counts) |
 
 ## Credit value formula
 

@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS systems (
     z               REAL,
     star_class      TEXT,               -- primary star spectral class
     region          TEXT,               -- CodexEntry region name
-    first_seen_at   TEXT                -- timestamp of first FSDJump/Location event
+    first_seen_at   TEXT,               -- timestamp of first FSDJump/Location event
+    total_bodies    INTEGER,            -- body count from DiscoveryScan (honk)
+    fss_complete    INTEGER DEFAULT 0   -- 1 when FSSAllBodiesFound fired
 );
 
 CREATE INDEX IF NOT EXISTS idx_systems_coords ON systems(x, y, z);
@@ -168,4 +170,87 @@ CREATE TABLE IF NOT EXISTS commander_snapshots (
     rank_empire     INTEGER,
     rank_federation INTEGER
 );
+
+-- Exploration and other commander statistics snapshots (Statistics event).
+CREATE TABLE IF NOT EXISTS statistics_snapshots (
+    id                      INTEGER PRIMARY KEY,
+    timestamp               TEXT    NOT NULL,
+    -- Exploration
+    systems_visited         INTEGER,
+    exploration_profits     INTEGER,
+    planets_scanned_to_level1 INTEGER,
+    planets_scanned_to_level2 INTEGER,
+    efficient_scans         INTEGER,
+    highest_payout          INTEGER,
+    total_hyperspace_dist   REAL,
+    total_hyperspace_jumps  INTEGER,
+    greatest_dist_from_start REAL,
+    time_played             INTEGER,
+    -- Exobiology
+    organic_genus_encountered INTEGER,
+    organic_species_encountered INTEGER,
+    organic_species_analysed  INTEGER,
+    exobiology_profits        INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_stats_ts ON statistics_snapshots(timestamp);
+
+-- Every signal discovered during FSS scanning (FSSSignalDiscovered).
+CREATE TABLE IF NOT EXISTS fss_signals (
+    id                    INTEGER PRIMARY KEY,
+    system_address        INTEGER NOT NULL REFERENCES systems(system_address),
+    timestamp             TEXT    NOT NULL,
+    signal_name           TEXT    NOT NULL,
+    signal_name_localised TEXT,
+    is_station            INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(system_address, signal_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fss_signals_system ON fss_signals(system_address);
+CREATE INDEX IF NOT EXISTS idx_fss_signals_name   ON fss_signals(signal_name);
+
+-- Barycentre orbital data (ScanBaryCentre).
+CREATE TABLE IF NOT EXISTS barycentres (
+    id                  INTEGER PRIMARY KEY,
+    system_address      INTEGER NOT NULL REFERENCES systems(system_address),
+    body_id             INTEGER NOT NULL,
+    timestamp           TEXT    NOT NULL,
+    semi_major_axis     REAL,   -- metres
+    eccentricity        REAL,
+    orbital_inclination REAL,   -- degrees
+    periapsis           REAL,   -- degrees
+    orbital_period      REAL,   -- seconds
+    ascending_node      REAL,   -- degrees
+    mean_anomaly        REAL,   -- degrees
+    UNIQUE(system_address, body_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_barycentres_system ON barycentres(system_address);
+
+-- Completed missions (MissionCompleted).
+CREATE TABLE IF NOT EXISTS missions (
+    id                  INTEGER PRIMARY KEY,
+    mission_id          INTEGER NOT NULL UNIQUE,
+    timestamp           TEXT    NOT NULL,
+    faction             TEXT,
+    name                TEXT,   -- mission type key, e.g. 'Mission_Courier_Democracy_name'
+    destination_system  TEXT,
+    destination_station TEXT,   -- station or settlement name
+    reward              INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_missions_ts      ON missions(timestamp);
+CREATE INDEX IF NOT EXISTS idx_missions_faction ON missions(faction);
+
+-- Powerplay merit events (PowerplayMerits).
+CREATE TABLE IF NOT EXISTS powerplay_merits (
+    id           INTEGER PRIMARY KEY,
+    timestamp    TEXT    NOT NULL,
+    power        TEXT    NOT NULL,
+    merits_gained INTEGER NOT NULL DEFAULT 0,
+    total_merits  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_pp_merits_ts    ON powerplay_merits(timestamp);
+CREATE INDEX IF NOT EXISTS idx_pp_merits_power ON powerplay_merits(power);
 """

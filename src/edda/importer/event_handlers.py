@@ -348,6 +348,103 @@ def handle_codex_entry(event: dict, conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# FSS / Discovery events
+# ---------------------------------------------------------------------------
+
+def handle_discovery_scan(event: dict, conn: sqlite3.Connection) -> None:
+    """DiscoveryScan — fired when the player honks, gives total body count."""
+    sa = event.get("SystemAddress")
+    if sa is None:
+        return
+    _ensure_system(sa, event, conn)
+    bodies = event.get("Bodies")
+    if bodies is not None:
+        conn.execute("""
+            UPDATE systems SET total_bodies = ?
+            WHERE system_address = ? AND (total_bodies IS NULL OR total_bodies < ?)
+        """, (bodies, sa, bodies))
+
+
+def handle_fss_all_bodies_found(event: dict, conn: sqlite3.Connection) -> None:
+    """FSSAllBodiesFound — fired when FSS scan is complete for a system."""
+    sa = event.get("SystemAddress")
+    if sa is None:
+        return
+    _ensure_system(sa, event, conn)
+    bodies = event.get("Count")
+    if bodies is not None:
+        conn.execute("""
+            UPDATE systems SET fss_complete = 1,
+                total_bodies = COALESCE(total_bodies, ?)
+            WHERE system_address = ?
+        """, (bodies, sa))
+    else:
+        conn.execute(
+            "UPDATE systems SET fss_complete = 1 WHERE system_address = ?", (sa,)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Statistics snapshot
+# ---------------------------------------------------------------------------
+
+def handle_statistics(event: dict, conn: sqlite3.Connection) -> None:
+    """Statistics — periodic comprehensive stats dump."""
+    expl = event.get("Exploration") or {}
+    exobio = event.get("Exobiology") or {}
+    conn.execute("""
+        INSERT INTO statistics_snapshots (
+            timestamp,
+            systems_visited, exploration_profits,
+            planets_scanned_to_level1, planets_scanned_to_level2,
+            efficient_scans, highest_payout,
+            total_hyperspace_dist, total_hyperspace_jumps,
+            greatest_dist_from_start, time_played,
+            organic_genus_encountered, organic_species_encountered,
+            organic_species_analysed, exobiology_profits
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        event.get("timestamp"),
+        expl.get("Systems_Visited"),
+        expl.get("Exploration_Profits"),
+        expl.get("Planets_Scanned_To_Level_1"),
+        expl.get("Planets_Scanned_To_Level_2"),
+        expl.get("Efficient_Scans"),
+        expl.get("Highest_Payout"),
+        expl.get("Total_Hyperspace_Distance"),
+        expl.get("Total_Hyperspace_Jumps"),
+        expl.get("Greatest_Distance_From_Start"),
+        event.get("TotalPlayTime"),
+        exobio.get("Organic_Genus_Encountered"),
+        exobio.get("Organic_Species_Encountered"),
+        exobio.get("Organic_Species_Analysed"),
+        exobio.get("Exobiology_Profits"),
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Rank promotion
+# ---------------------------------------------------------------------------
+
+def handle_promotion(event: dict, conn: sqlite3.Connection) -> None:
+    """Promotion — fires when any rank is promoted."""
+    conn.execute("""
+        INSERT INTO commander_snapshots
+            (timestamp, rank_combat, rank_trade, rank_explore,
+             rank_exobiology, rank_empire, rank_federation)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        event.get("timestamp"),
+        event.get("Combat"),
+        event.get("Trade"),
+        event.get("Explore"),
+        event.get("Exobiologist"),
+        event.get("Empire"),
+        event.get("Federation"),
+    ))
+
+
+# ---------------------------------------------------------------------------
 # Exploration sales
 # ---------------------------------------------------------------------------
 
@@ -357,6 +454,15 @@ def handle_multi_sell_exploration_data(event: dict, conn: sqlite3.Connection) ->
     conn.execute("""
         INSERT INTO exploration_sales (timestamp, base_value, bonus, total_earnings, event_type)
         VALUES (?, ?, ?, ?, 'MultiSellExplorationData')
+    """, (event.get("timestamp"), base, bonus, base + bonus))
+
+
+def handle_sell_exploration_data(event: dict, conn: sqlite3.Connection) -> None:
+    base = event.get("BaseValue", 0)
+    bonus = event.get("Bonus", 0)
+    conn.execute("""
+        INSERT INTO exploration_sales (timestamp, base_value, bonus, total_earnings, event_type)
+        VALUES (?, ?, ?, ?, 'SellExplorationData')
     """, (event.get("timestamp"), base, bonus, base + bonus))
 
 
@@ -393,6 +499,86 @@ def handle_load_game(event: dict, conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# FSS / barycentre / missions / powerplay
+# ---------------------------------------------------------------------------
+
+def handle_fss_signal_discovered(event: dict, conn: sqlite3.Connection) -> None:
+    sa = event.get("SystemAddress")
+    if not sa:
+        return
+    _ensure_system(sa, event, conn)
+    conn.execute("""
+        INSERT OR IGNORE INTO fss_signals
+            (system_address, timestamp, signal_name, signal_name_localised, is_station)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        sa,
+        event.get("timestamp"),
+        event.get("SignalName", ""),
+        event.get("SignalName_Localised"),
+        int(bool(event.get("IsStation", False))),
+    ))
+
+
+def handle_scan_barycentre(event: dict, conn: sqlite3.Connection) -> None:
+    sa = event.get("SystemAddress")
+    body_id = event.get("BodyID")
+    if sa is None or body_id is None:
+        return
+    _ensure_system(sa, event, conn)
+    conn.execute("""
+        INSERT OR IGNORE INTO barycentres
+            (system_address, body_id, timestamp, semi_major_axis, eccentricity,
+             orbital_inclination, periapsis, orbital_period, ascending_node, mean_anomaly)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        sa,
+        body_id,
+        event.get("timestamp"),
+        event.get("SemiMajorAxis"),
+        event.get("Eccentricity"),
+        event.get("OrbitalInclination"),
+        event.get("Periapsis"),
+        event.get("OrbitalPeriod"),
+        event.get("AscendingNode"),
+        event.get("MeanAnomaly"),
+    ))
+
+
+def handle_mission_completed(event: dict, conn: sqlite3.Connection) -> None:
+    mission_id = event.get("MissionID")
+    if mission_id is None:
+        return
+    station = event.get("DestinationStation") or event.get("DestinationSettlement")
+    conn.execute("""
+        INSERT OR IGNORE INTO missions
+            (mission_id, timestamp, faction, name,
+             destination_system, destination_station, reward)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        mission_id,
+        event.get("timestamp"),
+        event.get("Faction"),
+        event.get("Name"),
+        event.get("DestinationSystem"),
+        station,
+        event.get("Reward", 0),
+    ))
+
+
+def handle_powerplay_merits(event: dict, conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        INSERT INTO powerplay_merits (timestamp, power, merits_gained, total_merits)
+        VALUES (?, ?, ?, ?)
+    """, (
+        event.get("timestamp"),
+        event.get("Power", ""),
+        event.get("MeritsGained", 0),
+        event.get("TotalMerits", 0),
+    ))
+
+
+# ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
@@ -401,12 +587,21 @@ HANDLERS: dict[str, Any] = {
     "Location":                  handle_location,
     "Scan":                      handle_scan,
     "FSSBodySignals":            handle_fss_body_signals,
+    "FSSAllBodiesFound":         handle_fss_all_bodies_found,
     "SAASignalsFound":           handle_saa_signals_found,
     "SAAScanComplete":           handle_saa_scan_complete,
     "ScanOrganic":               handle_scan_organic,
     "SellOrganicData":           handle_sell_organic_data,
     "CodexEntry":                handle_codex_entry,
+    "DiscoveryScan":             handle_discovery_scan,
+    "Statistics":                handle_statistics,
     "MultiSellExplorationData":  handle_multi_sell_exploration_data,
+    "SellExplorationData":       handle_sell_exploration_data,
     "Rank":                      handle_rank,
+    "Promotion":                 handle_promotion,
     "LoadGame":                  handle_load_game,
+    "FSSSignalDiscovered":       handle_fss_signal_discovered,
+    "ScanBaryCentre":            handle_scan_barycentre,
+    "MissionCompleted":          handle_mission_completed,
+    "PowerplayMerits":           handle_powerplay_merits,
 }
