@@ -27,6 +27,8 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - Python 3.12 or newer
 - Elite Dangerous installed (journal files must be accessible)
 
+> **PDM and PATH**: the setup and update scripts fall back to `python -m pdm` automatically if `pdm` is not on your PATH. The `pdm run …` commands listed in this README however require `pdm` to be reachable directly. On Windows the typical location to add is `%APPDATA%\Python\PythonXXX\Scripts`; on Linux/macOS it is usually `~/.local/bin`.
+
 ## Installation
 
 **Windows (double-click or run in any terminal):**
@@ -47,8 +49,7 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-This creates a `.venv` virtual environment and installs all dependencies into it.
-On Windows, the `edda-*` commands live inside `.venv\Scripts\`; on Linux/macOS they are in `.venv/bin/`.
+This runs `pdm install`, which creates a virtual environment and installs all dependencies.
 
 ## Updating
 
@@ -75,30 +76,40 @@ If `git` is not installed (e.g. you downloaded a ZIP from the repository), the p
 
 Then open `dashboard.html` in a browser.
 
+## Updating dependencies
+
+Dependencies are pinned in `pdm.lock` (committed to the repository). To intentionally bump to newer versions within the declared bounds:
+
+```bash
+pdm update
+```
+
+Then commit the updated `pdm.lock`. Everyone else gets the new versions on the next `git pull` + `pdm sync`.
+
+## Running commands manually
+
+All commands are run through PDM:
+
+```bash
+pdm run import       # import journal files
+pdm run stats        # print summary to terminal
+pdm run dashboard    # build dashboard.html
+```
+
+Pass arguments after `--`:
+
+```bash
+pdm run trip -- --from 2025-01-01 --to 2025-03-31
+pdm run import -- --force --quiet
+```
+
 ## Quick start
 
-**Windows:**
-```powershell
-# Activate the environment (once per terminal session):
-.\.venv\Scripts\Activate.ps1
-
-edda-import       # import journal files
-edda-stats        # print summary to terminal
-edda-dashboard    # build dashboard.html
-```
-
-Or without activating: `.\.venv\Scripts\edda-import` etc.
-
-**Linux / macOS:**
 ```bash
-source .venv/bin/activate
-
-edda-import
-edda-stats
-edda-dashboard
+pdm run import       # parse all journal files into the database
+pdm run stats        # print a lifetime summary to the terminal
+pdm run dashboard    # build dashboard.html
 ```
-
-Or without activating: `.venv/bin/edda-import` etc.
 
 Open `dashboard.html` in any browser — no server required.
 
@@ -119,12 +130,12 @@ The dashboard file is several MB in size due to embedded Plotly.js and base64-en
 
 ## Commands
 
-### `edda-import`
+### `pdm run import`
 
 Parses journal files and writes data into `.edda/ed.db`.
 
 ```
-edda-import [--journal-dir DIR] [--db PATH] [--force] [--quiet]
+pdm run import -- [--journal-dir DIR] [--db PATH] [--force] [--quiet]
 ```
 
 | Flag | Description |
@@ -162,20 +173,20 @@ Handled journal events:
 
 All other event types are silently ignored. If a journal file contains an event type not in the handled list and not in the known-ignored list, a warning is printed at the end of the import — this indicates a new game event that may be worth handling.
 
-### `edda-stats`
+### `pdm run stats`
 
 Prints a lifetime summary to the terminal, including personal records (highest gravity, hottest surface, longest jump, etc.).
 
 ```
-edda-stats [--db PATH]
+pdm run stats -- [--db PATH]
 ```
 
-### `edda-trip`
+### `pdm run trip`
 
 Prints statistics scoped to a date range — useful for expedition reports.
 
 ```
-edda-trip --from YYYY-MM-DD --to YYYY-MM-DD [--systems] [--db PATH]
+pdm run trip -- --from YYYY-MM-DD --to YYYY-MM-DD [--systems] [--db PATH]
 ```
 
 Outputs:
@@ -186,12 +197,12 @@ Outputs:
 - Personal bests within the range
 - `--systems`: full chronological list of every system visited
 
-### `edda-map`
+### `pdm run map`
 
 Renders galaxy maps and sector heat maps.
 
 ```
-edda-map [--out DIR] [--static-only] [--interactive-only] [--db PATH]
+pdm run map -- [--out DIR] [--static-only] [--interactive-only] [--db PATH]
 ```
 
 Outputs (in `output/` by default):
@@ -209,22 +220,22 @@ Outputs (in `output/` by default):
 
 All 3D maps use fixed in-game galaxy axis ranges (X: ±50,000 ly, Y: −16,000 / +9,000 ly, Z: −24,000 / +76,000 ly) so sparse data does not distort the proportions.
 
-### `edda-charts`
+### `pdm run charts`
 
 Renders all analytics charts.
 
 ```
-edda-charts [--out DIR] [--static-only] [--interactive-only] [--db PATH]
+pdm run charts -- [--out DIR] [--static-only] [--interactive-only] [--db PATH]
 ```
 
 Outputs include body type counts, star class counts, exploration and exobiology income over time, jump distance histogram, top species, species × planet type heat map, body value breakdowns, the valuable-regions charts (`body_rate_vs_z`, `body_rate_vs_star_class`, `sector_terra_rate`, `sector_elw_rate`), and the He% correlation charts.
 
-### `edda-dashboard`
+### `pdm run dashboard`
 
 Builds a single self-contained HTML file with all analytics.
 
 ```
-edda-dashboard [--out FILE] [--db PATH]
+pdm run dashboard -- [--out FILE] [--db PATH]
 ```
 
 The dashboard sections:

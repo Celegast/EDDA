@@ -4,25 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "edda"
-version = "0.2.0"
+version = "0.2.0b"
 description = "Elite Dangerous Data Analyser — journal parser, database, and analytics dashboard"
 requires-python = ">=3.12"
 dependencies = [
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "seaborn",
-    "plotly",
-    "kaleido",
+    "matplotlib>=3.7,<4",
+    "numpy>=2.0,<3",
+    "pandas>=3.0,<4",
+    "seaborn>=0.13,<1",
+    "plotly>=6.0,<7",
+    "kaleido>=1.0,<2",
 ]
-
-[project.scripts]
-edda-import     = "edda.cli:cmd_import"
-edda-stats      = "edda.cli:cmd_stats"
-edda-trip       = "edda.cli:cmd_trip"
-edda-map        = "edda.cli:cmd_map"
-edda-charts     = "edda.cli:cmd_charts"
-edda-dashboard  = "edda.cli:cmd_dashboard"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pdm.scripts]
+import    = {call = "edda.cli:cmd_import"}
+stats     = {call = "edda.cli:cmd_stats"}
+trip      = {call = "edda.cli:cmd_trip"}
+map       = {call = "edda.cli:cmd_map"}
+charts    = {call = "edda.cli:cmd_charts"}
+dashboard = {call = "edda.cli:cmd_dashboard"}

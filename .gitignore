@@ -24,3 +24,5 @@ build/
 .venv/
 venv/
 env/
+
+/.pdm-python

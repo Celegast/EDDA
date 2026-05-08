@@ -7,7 +7,7 @@ echo === EDDA update ===
 :: Step 1: Git pull
 :: ---------------------------------------------------------------
 echo.
-echo [1/6] Pulling latest changes...
+echo [1/5] Pulling latest changes...
 where git >nul 2>&1
 if errorlevel 1 (
     echo   git not found - skipping pull.
@@ -22,69 +22,52 @@ git pull
 if errorlevel 1 ( echo git pull failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
-:: Step 2: Virtual environment
+:: Step 2: Sync dependencies
 :: ---------------------------------------------------------------
 :step2
 echo.
-echo [2/6] Virtual environment...
-if exist .venv (
-    echo   .venv already exists.
-    goto step3
+echo [2/5] Syncing dependencies...
+set PDM=pdm
+where pdm >nul 2>&1
+if errorlevel 1 (
+    python -m pdm --version >nul 2>&1
+    if errorlevel 1 (
+        echo Error: PDM not found.
+        echo Install it with:  pip install pdm
+        echo Then ensure the Python Scripts directory is in your PATH.
+        echo Typical location: %APPDATA%\Python\PythonXXX\Scripts
+        pause
+        exit /b 1
+    )
+    set PDM=python -m pdm
 )
-
-echo   Creating .venv...
-set "PYTHON="
-python -c "import sys; sys.exit(0 if sys.version_info>=(3,12) else 1)" >nul 2>&1
-if not errorlevel 1 set "PYTHON=python"
-
-if not defined PYTHON (
-    py -3.12 --version >nul 2>&1
-    if not errorlevel 1 set "PYTHON=py -3.12"
-)
-
-if not defined PYTHON (
-    echo Error: Python 3.12 or newer not found.
-    echo Install it from https://www.python.org/downloads/
-    pause
-    exit /b 1
-)
-
-%PYTHON% -m venv .venv
-if errorlevel 1 ( echo Failed to create .venv & pause & exit /b 1 )
+%PDM% sync
+if errorlevel 1 ( echo Dependency sync failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
-:: Step 3: Install / sync dependencies
-:: ---------------------------------------------------------------
-:step3
-echo.
-echo [3/6] Installing current version...
-.venv\Scripts\pip install -e . --quiet
-if errorlevel 1 ( echo Installation failed & pause & exit /b 1 )
-
-:: ---------------------------------------------------------------
-:: Step 4: Import journal data
+:: Step 3: Import journal data
 :: ---------------------------------------------------------------
 echo.
-echo [4/6] Importing journal data...
-.venv\Scripts\edda-import
+echo [3/5] Importing journal data...
+%PDM% run import
 if errorlevel 1 ( echo Import failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
-:: Step 5: Rebuild maps and charts
+:: Step 4: Rebuild maps and charts
 :: ---------------------------------------------------------------
 echo.
-echo [5/6] Rebuilding maps and charts...
-.venv\Scripts\edda-map
+echo [4/5] Rebuilding maps and charts...
+%PDM% run map
 if errorlevel 1 ( echo Map build failed & pause & exit /b 1 )
-.venv\Scripts\edda-charts
+%PDM% run charts
 if errorlevel 1 ( echo Chart build failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
-:: Step 6: Rebuild dashboard
+:: Step 5: Rebuild dashboard
 :: ---------------------------------------------------------------
 echo.
-echo [6/6] Rebuilding dashboard...
-.venv\Scripts\edda-dashboard
+echo [5/5] Rebuilding dashboard...
+%PDM% run dashboard
 if errorlevel 1 ( echo Dashboard build failed & pause & exit /b 1 )
 
 echo.

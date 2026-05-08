@@ -2,27 +2,23 @@
 set -euo pipefail
 
 RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-die() { echo -e "${RED}Error: $*${NC}" >&2; exit 1; }
+echo -e "${YELLOW}=== EDDA setup ===${NC}"
+echo
 
-PYTHON=""
-for py in python3.12 python3 python; do
-    if command -v "$py" &>/dev/null; then
-        if "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)" 2>/dev/null; then
-            PYTHON="$py"
-            break
-        fi
-    fi
-done
-[ -n "$PYTHON" ] || die "Python 3.12 or newer not found. Please install it first."
+if command -v pdm &>/dev/null; then
+    PDM="pdm"
+else
+    echo "  PDM not found. Installing..."
+    pip install pdm || python3 -m pip install pdm || { echo -e "${RED}Failed to install PDM${NC}"; exit 1; }
+    PDM="python3 -m pdm"
+fi
 
-"$PYTHON" -m venv .venv
-.venv/bin/pip install -e .
+echo "Installing dependencies..."
+$PDM sync
 
 echo
-echo "Done. Activate the environment with:"
-echo "  source .venv/bin/activate"
-echo
-echo "Or call commands directly:"
-echo "  .venv/bin/edda-import"
+echo -e "${GREEN}Done. Run ./update.sh to import journals and build the dashboard.${NC}"

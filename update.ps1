@@ -5,18 +5,10 @@ function Step($n, $total, $label) {
     Write-Host "[$n/$total] $label" -ForegroundColor Cyan
 }
 
-function Run {
-    param([string[]]$cmd)
-    $exe  = $cmd[0]
-    $rest = if ($cmd.Length -gt 1) { $cmd[1..($cmd.Length - 1)] } else { @() }
-    & $exe @rest
-    if ($LASTEXITCODE -ne 0) { throw "Failed: $($cmd -join ' ')" }
-}
-
 Write-Host "=== EDDA update ===" -ForegroundColor Yellow
 
 # 1. Pull latest code
-Step 1 6 "Pulling latest changes..."
+Step 1 5 "Pulling latest changes..."
 $hasGit = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 if ($hasGit -and (Test-Path ".git")) {
     git pull
@@ -28,31 +20,43 @@ if ($hasGit -and (Test-Path ".git")) {
     Write-Host "  Not a git repository — skipping pull." -ForegroundColor DarkYellow
 }
 
-# 2. Create venv if absent
-Step 2 6 "Virtual environment..."
-if (-not (Test-Path ".venv")) {
-    Write-Host "  Creating .venv..."
-    Run "python", "-m", "venv", ".venv"
+# 2. Sync dependencies
+Step 2 5 "Syncing dependencies..."
+$usePythonMPdm = $false
+if (Get-Command pdm -ErrorAction SilentlyContinue) {
+    # pdm is in PATH, nothing to do
 } else {
-    Write-Host "  .venv already exists."
+    python -m pdm --version 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $usePythonMPdm = $true
+    } else {
+        Write-Host "Error: PDM not found." -ForegroundColor Red
+        Write-Host "Install it with:  pip install pdm"
+        Write-Host "Then ensure the Python Scripts directory is in your PATH."
+        Write-Host "Typical location: $env:APPDATA\Python\PythonXXX\Scripts"
+        exit 1
+    }
 }
 
-# 3. Install / sync dependencies
-Step 3 6 "Installing current version into .venv..."
-Run ".\.venv\Scripts\pip", "install", "-e", ".", "--quiet"
+function Pdm([string[]]$a) {
+    if ($usePythonMPdm) { & python -m pdm @a } else { & pdm @a }
+    if ($LASTEXITCODE -ne 0) { throw "pdm $($a -join ' ') failed" }
+}
 
-# 4. Import latest journal data
-Step 4 6 "Importing journal data..."
-Run ".\.venv\Scripts\edda-import"
+Pdm "sync"
 
-# 5. Rebuild standalone outputs (maps + charts → output/)
-Step 5 6 "Rebuilding maps and charts..."
-Run ".\.venv\Scripts\edda-map"
-Run ".\.venv\Scripts\edda-charts"
+# 3. Import latest journal data
+Step 3 5 "Importing journal data..."
+Pdm "run", "import"
 
-# 6. Rebuild dashboard
-Step 6 6 "Rebuilding dashboard..."
-Run ".\.venv\Scripts\edda-dashboard"
+# 4. Rebuild maps and charts
+Step 4 5 "Rebuilding maps and charts..."
+Pdm "run", "map"
+Pdm "run", "charts"
+
+# 5. Rebuild dashboard
+Step 5 5 "Rebuilding dashboard..."
+Pdm "run", "dashboard"
 
 Write-Host ""
 Write-Host "Done.  Open dashboard.html in a browser." -ForegroundColor Green

@@ -8,7 +8,7 @@ DARK_YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-step() { echo; echo -e "${CYAN}[$1/6] $2${NC}"; }
+step() { echo; echo -e "${CYAN}[$1/5] $2${NC}"; }
 die()  { echo -e "${RED}Error: $*${NC}" >&2; exit 1; }
 
 echo -e "${YELLOW}=== EDDA update ===${NC}"
@@ -24,42 +24,29 @@ else
     echo -e "${DARK_YELLOW}  Not a git repository — skipping pull.${NC}"
 fi
 
-# 2. Locate Python 3.12+
-step 2 "Virtual environment..."
-PYTHON=""
-for py in python3.12 python3 python; do
-    if command -v "$py" &>/dev/null; then
-        if "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)" 2>/dev/null; then
-            PYTHON="$py"
-            break
-        fi
-    fi
-done
-[ -n "$PYTHON" ] || die "Python 3.12 or newer not found. Please install it first."
-
-if [ ! -d .venv ]; then
-    echo "  Creating .venv..."
-    "$PYTHON" -m venv .venv
+# 2. Sync dependencies
+step 2 "Syncing dependencies..."
+if command -v pdm &>/dev/null; then
+    PDM="pdm"
+elif python3 -m pdm --version &>/dev/null 2>&1; then
+    PDM="python3 -m pdm"
 else
-    echo "  .venv already exists."
+    die "PDM not found. Install with: pip install pdm\n  Then ensure the Python bin directory is in your PATH (e.g. ~/.local/bin)"
 fi
+$PDM sync
 
-# 3. Install / sync dependencies
-step 3 "Installing current version into .venv..."
-.venv/bin/pip install -e . --quiet
+# 3. Import latest journal data
+step 3 "Importing journal data..."
+$PDM run import
 
-# 4. Import latest journal data
-step 4 "Importing journal data..."
-.venv/bin/edda-import
+# 4. Rebuild maps and charts
+step 4 "Rebuilding maps and charts..."
+$PDM run map
+$PDM run charts
 
-# 5. Rebuild standalone outputs (maps + charts)
-step 5 "Rebuilding maps and charts..."
-.venv/bin/edda-map
-.venv/bin/edda-charts
-
-# 6. Rebuild dashboard
-step 6 "Rebuilding dashboard..."
-.venv/bin/edda-dashboard
+# 5. Rebuild dashboard
+step 5 "Rebuilding dashboard..."
+$PDM run dashboard
 
 echo
 echo -e "${GREEN}Done.  Open dashboard.html in a browser.${NC}"
