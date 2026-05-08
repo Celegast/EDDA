@@ -10,6 +10,18 @@ import pandas as pd
 
 SECTOR_SIZE = 1200  # ly — ED sector cube side length
 
+# The game journal writes a species-variant name into genus_localised for these two genera.
+# Use this snippet in any SELECT that reads genus_localised; pass the table alias prefix
+# (e.g. "sc") or empty string for unqualified column references.
+def _genus_sql(prefix: str = "") -> str:
+    p = f"{prefix}." if prefix else ""
+    return (
+        f"CASE {p}genus"
+        f" WHEN '$Codex_Ent_Sphere_Name;' THEN 'Anemone'"
+        f" WHEN '$Codex_Ent_Tube_Name;' THEN 'Sinuous Tubers'"
+        f" ELSE {p}genus_localised END"
+    )
+
 
 # Matches the procedural "XX-X" tag — everything before it is the sector name.
 # Examples: "Hypaa Pruae OZ-D d13-76" → "Hypaa Pruae"
@@ -145,9 +157,9 @@ def top_species(conn: sqlite3.Connection, n: int = 20) -> pd.DataFrame:
 
 
 def species_by_planet_type(conn: sqlite3.Connection) -> pd.DataFrame:
-    sql = """
+    sql = f"""
         SELECT b.subtype AS planet_type,
-               sc.genus_localised AS genus,
+               {_genus_sql('sc')} AS genus,
                COUNT(DISTINCT sc.species) AS species_count,
                COUNT(*) AS scan_count
         FROM organic_scans sc
@@ -155,7 +167,7 @@ def species_by_planet_type(conn: sqlite3.Connection) -> pd.DataFrame:
         WHERE sc.scan_state = 'Analyse'
           AND sc.genus_localised IS NOT NULL
           AND b.subtype IS NOT NULL
-        GROUP BY b.subtype, sc.genus_localised
+        GROUP BY b.subtype, {_genus_sql('sc')}
         ORDER BY scan_count DESC
     """
     return pd.read_sql_query(sql, conn)
@@ -492,13 +504,13 @@ def organic_values_table(conn: sqlite3.Connection,
     from .valuation import organic_value, SPECIES_VALUES
 
     # Completed scans
-    scans_sql = """
+    scans_sql = f"""
         SELECT sc.rowid            AS scan_id,
                sc.system_address,
                sc.body_id,
                sc.timestamp,
                sc.species_localised,
-               sc.genus_localised,
+               {_genus_sql('sc')} AS genus_localised,
                b.name             AS body_name,
                b.subtype          AS planet_class,
                s.name             AS system_name
@@ -1253,10 +1265,10 @@ def trip_species_breakdown(conn: sqlite3.Connection,
                            date_from: str, date_to: str) -> pd.DataFrame:
     """Organic species scanned (completed) during the trip."""
     lo, hi = _ts_bounds(date_from, date_to)
-    sql = """
-        SELECT species_localised AS species,
-               genus_localised   AS genus,
-               COUNT(*)          AS scans
+    sql = f"""
+        SELECT species_localised            AS species,
+               {_genus_sql()} AS genus,
+               COUNT(*)                     AS scans
         FROM organic_scans
         WHERE scan_state = 'Analyse'
           AND timestamp >= ? AND timestamp <= ?

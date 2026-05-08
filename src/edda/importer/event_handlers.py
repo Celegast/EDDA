@@ -13,6 +13,13 @@ from typing import Any
 # Helpers
 # ---------------------------------------------------------------------------
 
+# The game journal writes a species-variant name into genus_localised for these two genera.
+GENUS_LOCALISED_CORRECTIONS: dict[str, str] = {
+    "$Codex_Ent_Sphere_Name;": "Anemone",
+    "$Codex_Ent_Tube_Name;":   "Sinuous Tubers",
+}
+
+
 def _atmosphere_density(atmosphere_type: str) -> str:
     """Extract a normalised density label from a raw atmosphere type string."""
     lower = (atmosphere_type or "").lower()
@@ -290,7 +297,7 @@ def handle_scan_organic(event: dict, conn: sqlite3.Connection) -> None:
         event.get("timestamp"),
         event.get("ScanType"),
         event.get("Genus"),
-        event.get("Genus_Localised"),
+        GENUS_LOCALISED_CORRECTIONS.get(event.get("Genus", ""), event.get("Genus_Localised")),
         event.get("Species"),
         event.get("Species_Localised"),
         event.get("Variant"),

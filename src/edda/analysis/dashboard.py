@@ -290,6 +290,15 @@ section h2 {
 .detail-btn.active { background: #1a2a4a; color: #88ccff; }
 .detail-btn.hidden { display: none; }
 
+/* ---- Genus groups (species catalogue) ---- */
+.genus-header { font-weight: 600; color: #aabbee; }
+.genus-header::before { content: '▸ '; font-size: 0.75em; opacity: 0.7; }
+.genus-header.open::before { content: '▾ '; }
+.genus-items { display: none; }
+.genus-items.open { display: block; }
+.species-btn { padding-left: 26px !important; font-size: 0.80em; }
+.legacy-tag { font-size: 0.62em; background: rgba(100,70,10,0.4); color: #bbaa55; border: 1px solid #8a7030; border-radius: 3px; padding: 0 3px; margin-left: 5px; vertical-align: middle; letter-spacing: 0.03em; }
+
 .detail-content { min-width: 0; }
 .detail-panel { display: none; }
 .detail-panel.active { display: block; }
@@ -417,11 +426,45 @@ _JS = """
         });
     });
 
+    // ---- Genus expand/collapse ----
+    document.querySelectorAll('.genus-header').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var items = btn.nextElementSibling;
+            var open = items.classList.toggle('open');
+            btn.classList.toggle('open', open);
+        });
+    });
+
     // ---- Search filter for detail lists ----
     document.querySelectorAll('.detail-list input[type=search]').forEach(function (inp) {
         inp.addEventListener('input', function () {
-            var q = inp.value.toLowerCase();
-            inp.closest('.detail-list').querySelectorAll('.detail-btn:not(.detail-overview-btn)').forEach(function (btn) {
+            var q = inp.value.trim().toLowerCase();
+            var list = inp.closest('.detail-list');
+
+            // Genus-grouped items (species catalogue)
+            list.querySelectorAll('.genus-group').forEach(function (group) {
+                var header = group.querySelector('.genus-header');
+                var items  = group.querySelector('.genus-items');
+                var btns   = group.querySelectorAll('.species-btn');
+                if (!q) {
+                    header.classList.remove('hidden');
+                    btns.forEach(function (b) { b.classList.remove('hidden'); });
+                    return;
+                }
+                var genusMatch = header.dataset.label.toLowerCase().includes(q);
+                var anyMatch   = false;
+                btns.forEach(function (b) {
+                    var m = genusMatch || b.dataset.label.toLowerCase().includes(q);
+                    b.classList.toggle('hidden', !m);
+                    if (m) anyMatch = true;
+                });
+                var show = genusMatch || anyMatch;
+                header.classList.toggle('hidden', !show);
+                if (show) { items.classList.add('open'); header.classList.add('open'); }
+            });
+
+            // Flat items (body/star catalogues)
+            list.querySelectorAll('.detail-btn:not(.detail-overview-btn):not(.genus-header):not(.species-btn)').forEach(function (btn) {
                 btn.classList.toggle('hidden', !btn.dataset.label.toLowerCase().includes(q));
             });
         });
@@ -1007,73 +1050,173 @@ def _star_overview(star_df: pd.DataFrame) -> str:
 # Species catalogue
 # ---------------------------------------------------------------------------
 
+def _species_panel_html(species: str, grp: pd.DataFrame,
+                        genus: str, species_values: dict) -> str:
+    n_scans    = len(grp)
+    n_first    = int(grp["is_first_log"].sum())
+    base_val   = species_values.get(species, int(grp["base_value"].iloc[0]))
+    est_total  = grp["estimated_payout"].sum()
+    actual_raw = grp["actual_total_sold"].dropna()
+    actual     = float(actual_raw.iloc[0]) if not actual_raw.empty else 0.0
+
+    card = _stats_card([
+        ("Scans",       f"{n_scans:,}"),
+        ("First logs",  f"{n_first:,}"),
+        ("Base value",  _fmt_cr(base_val)),
+        ("Est. total",  _fmt_cr(est_total)),
+        ("Actual sold", _fmt_cr(actual) if actual > 0 else "—"),
+    ])
+
+    rows = []
+    for _, r in grp.sort_values("timestamp").iterrows():
+        ts  = str(r.get("timestamp", ""))[:10]
+        sys = r.get("system_name")  or "—"
+        bod = r.get("body_name")    or "—"
+        pc  = r.get("planet_class") or "—"
+        fl  = '<span class="check">✓</span>' if r.get("is_first_log") else ""
+        ep  = _fmt_cr(r.get("estimated_payout", 0))
+        rows.append(
+            f"<tr><td>{ts}</td><td>{sys}</td><td>{bod}</td>"
+            f"<td>{pc}</td>"
+            f'<td style="text-align:center">{fl}</td>'
+            f'<td class="num">{ep}</td></tr>'
+        )
+    table = (
+        '<div class="table-wrap"><table class="detail-table"><thead><tr>'
+        "<th>Date</th><th>System</th><th>Body</th><th>Planet type</th>"
+        "<th>1st log</th><th>Est. value</th>"
+        f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+    )
+    return (
+        f'<p style="color:#6677aa;font-size:0.82em;margin-bottom:12px">{genus}</p>'
+        + card + table
+    )
+
+
+def _genus_panel_html(genus: str, genus_df: pd.DataFrame,
+                      species_values: dict) -> str:
+    n_species = genus_df["species"].nunique()
+    n_scans   = len(genus_df)
+    n_first   = int(genus_df["is_first_log"].sum())
+    est_total = genus_df["estimated_payout"].sum()
+
+    card = _stats_card([
+        ("Species",        f"{n_species:,}"),
+        ("Total scans",    f"{n_scans:,}"),
+        ("First logs",     f"{n_first:,}"),
+        ("Est. total",     _fmt_cr(est_total)),
+    ])
+
+    grp = (
+        genus_df.groupby("species", sort=False)
+        .agg(scans=("species", "count"),
+             first_logs=("is_first_log", "sum"),
+             est_total=("estimated_payout", "sum"),
+             planet_types=("planet_class",
+                           lambda x: ", ".join(sorted(x.dropna().unique()))))
+        .reset_index()
+        .sort_values("scans", ascending=False)
+    )
+    rows = []
+    for _, r in grp.iterrows():
+        base = species_values.get(r["species"], 0)
+        rows.append(
+            f"<tr><td>{r['species']}</td>"
+            f'<td class="num">{int(r["scans"]):,}</td>'
+            f'<td class="num">{int(r["first_logs"]):,}</td>'
+            f'<td class="num">{_fmt_cr(base)}</td>'
+            f'<td class="num">{_fmt_cr(r["est_total"])}</td>'
+            f"<td>{r['planet_types'] or '—'}</td></tr>"
+        )
+    table = (
+        '<div class="table-wrap"><table class="detail-table sortable"><thead><tr>'
+        "<th>Species</th><th>Scans</th><th>First logs</th>"
+        "<th>Base value</th><th>Est. total</th><th>Planet types</th>"
+        f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+    )
+    return card + table
+
+
+_HORIZONS_GENERA = frozenset({
+    "Amphora Plant", "Anemone", "Bark Mounds",
+    "Brain Trees", "Crystalline Shards", "Sinuous Tubers",
+})
+
+
 def _build_species_section(oval_df: pd.DataFrame) -> str:
     if oval_df.empty:
         return '<p class="empty-note">No organic scan data.</p>'
 
     from .valuation import SPECIES_VALUES
 
-    list_items = []
-    panels: dict[str, str] = {}
+    overview_panel_id = "sp-overview"
+    panels: dict[str, str] = {overview_panel_id: _species_overview(oval_df)}
 
-    # Sort by species name; group preserves sort order
-    for species, grp in oval_df.groupby("species", sort=True):
-        if not species:
-            continue
+    genus_groups: list[tuple[str, str, list[tuple[str, str]]]] = []
+    sp_idx = 0
+    for g_idx, (genus, genus_df) in enumerate(
+            oval_df.groupby("genus", sort=True)):
+        genus_label    = genus or "Unknown"
+        genus_panel_id = f"sp-genus-{g_idx}"
+        species_items: list[tuple[str, str]] = []
 
-        panel_id = f"sp-{len(list_items)}"
-        list_items.append((species, panel_id))
+        for species, sp_grp in genus_df.groupby("species", sort=True):
+            if not species:
+                continue
+            sp_id = f"sp-{sp_idx}"
+            sp_idx += 1
+            species_items.append((species, sp_id))
+            panels[sp_id] = _species_panel_html(
+                species, sp_grp, genus_label, SPECIES_VALUES)
 
-        n_scans     = len(grp)
-        n_first     = int(grp["is_first_log"].sum())
-        base_val    = SPECIES_VALUES.get(species, int(grp["base_value"].iloc[0]))
-        est_total   = grp["estimated_payout"].sum()
-        actual_raw  = grp["actual_total_sold"].dropna()
-        actual      = float(actual_raw.iloc[0]) if not actual_raw.empty else 0.0
-        genus       = grp["genus"].iloc[0] or ""
+        panels[genus_panel_id] = _genus_panel_html(
+            genus_label, genus_df, SPECIES_VALUES)
+        genus_groups.append((genus_label, genus_panel_id, species_items))
 
-        card = _stats_card([
-            ("Scans",        f"{n_scans:,}"),
-            ("First logs",   f"{n_first:,}"),
-            ("Base value",   _fmt_cr(base_val)),
-            ("Est. total",   _fmt_cr(est_total)),
-            ("Actual sold",  _fmt_cr(actual) if actual > 0 else "—"),
-        ])
+    # Non-legacy genera first (alphabetical), then Horizons legacy genera (alphabetical)
+    genus_groups.sort(key=lambda g: (g[0] in _HORIZONS_GENERA, g[0]))
 
-        rows = []
-        for _, r in grp.sort_values("timestamp").iterrows():
-            ts  = str(r.get("timestamp", ""))[:10]
-            sys = r.get("system_name") or "—"
-            bod = r.get("body_name")   or "—"
-            pc  = r.get("planet_class") or "—"
-            fl  = '<span class="check">✓</span>' if r.get("is_first_log") else ""
-            ep  = _fmt_cr(r.get("estimated_payout", 0))
-            rows.append(
-                f"<tr><td>{ts}</td><td>{sys}</td><td>{bod}</td>"
-                f"<td>{pc}</td>"
-                f'<td style="text-align:center">{fl}</td>'
-                f'<td class="num">{ep}</td></tr>'
+    # Build list block with grouped structure
+    btns = [
+        f'<button class="detail-btn detail-overview-btn active" '
+        f'data-panel="{overview_panel_id}">Overview</button>',
+        '<input type="search" placeholder="Search…">',
+    ]
+    for genus_label, genus_panel_id, species_items in genus_groups:
+        sp_btns = "".join(
+            f'<button class="detail-btn species-btn" data-panel="{sp_id}" '
+            f'data-label="{sp}">{sp}</button>'
+            for sp, sp_id in species_items
+        )
+        legacy_tag = ' <span class="legacy-tag">Horizons</span>' if genus_label in _HORIZONS_GENERA else ""
+        btns.append(
+            f'<div class="genus-group">'
+            f'<button class="detail-btn genus-header" data-panel="{genus_panel_id}" '
+            f'data-label="{genus_label}">{genus_label}{legacy_tag}</button>'
+            f'<div class="genus-items">{sp_btns}</div>'
+            f'</div>'
+        )
+
+    list_block = f'<div class="detail-list">{"".join(btns)}</div>'
+
+    # Build content block
+    panel_html = [
+        f'<div class="detail-panel active" id="{overview_panel_id}">'
+        f'{panels[overview_panel_id]}</div>'
+    ]
+    for genus_label, genus_panel_id, species_items in genus_groups:
+        panel_html.append(
+            f'<div class="detail-panel" id="{genus_panel_id}">'
+            f'{panels[genus_panel_id]}</div>'
+        )
+        for sp, sp_id in species_items:
+            panel_html.append(
+                f'<div class="detail-panel" id="{sp_id}">'
+                f'{panels[sp_id]}</div>'
             )
 
-        table = (
-            '<div class="table-wrap">'
-            '<table class="detail-table"><thead><tr>'
-            "<th>Date</th><th>System</th><th>Body</th><th>Planet type</th>"
-            "<th>1st log</th><th>Est. value</th>"
-            "</tr></thead>"
-            f'<tbody>{"".join(rows)}</tbody></table></div>'
-        )
-
-        panels[panel_id] = (
-            f'<p style="color:#6677aa;font-size:0.82em;margin-bottom:12px">{genus}</p>'
-            + card + table
-        )
-
-    def _panel(label, panel_id, is_first):
-        active = " active" if is_first else ""
-        return f'<div class="detail-panel{active}" id="{panel_id}">{panels[panel_id]}</div>'
-
-    return _detail_layout("sp", list_items, _panel, overview_html=_species_overview(oval_df))
+    content_block = f'<div class="detail-content">{"".join(panel_html)}</div>'
+    return f'<div class="detail-layout">{list_block}{content_block}</div>'
 
 
 # ---------------------------------------------------------------------------
