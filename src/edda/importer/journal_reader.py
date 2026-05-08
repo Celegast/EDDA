@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .event_handlers import HANDLERS
+from .event_handlers import HANDLERS, KNOWN_IGNORED_EVENTS
 
 
 ED_JOURNAL_DIR = (
@@ -42,19 +42,21 @@ def already_processed(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
 
 
 def process_file(path: Path, conn: sqlite3.Connection,
-                 skip_lines: int = 0) -> tuple[int, int]:
+                 skip_lines: int = 0) -> tuple[int, int, set[str]]:
     """
     Process one journal file starting at line skip_lines.
 
     Each parsed event is dispatched to its structured handler (if one exists in
-    HANDLERS). Unknown event types are silently skipped.
+    HANDLERS). Event types in neither HANDLERS nor KNOWN_IGNORED_EVENTS are
+    collected and returned so the caller can report them.
 
-    Returns (events_handled, total_lines_in_file).
+    Returns (events_counted, total_lines_in_file, unknown_event_types).
     The caller is responsible for updating journal_files.
     """
     event_count = 0
     pending = 0
     total_lines = 0
+    unknown: set[str] = set()
 
     conn.execute("BEGIN")
     with path.open(encoding="utf-8", errors="replace") as fh:
@@ -74,6 +76,8 @@ def process_file(path: Path, conn: sqlite3.Connection,
             handler = HANDLERS.get(event_type)
             if handler:
                 handler(event, conn)
+            elif event_type and event_type not in KNOWN_IGNORED_EVENTS:
+                unknown.add(event_type)
 
             event_count += 1
             pending += 1
@@ -83,7 +87,7 @@ def process_file(path: Path, conn: sqlite3.Connection,
                 pending = 0
 
     conn.execute("COMMIT")
-    return event_count, total_lines
+    return event_count, total_lines, unknown
 
 
 def run_import(conn: sqlite3.Connection,
@@ -114,6 +118,7 @@ def run_import(conn: sqlite3.Connection,
     files_processed = 0
     files_skipped = 0
     events_handled = 0
+    unknown_event_types: set[str] = set()
 
     total = len(all_files)
     for i, path in enumerate(all_files, 1):
@@ -148,7 +153,8 @@ def run_import(conn: sqlite3.Connection,
             if verbose:
                 print(f"[{i}/{total}] {path.name} ... ", end="", flush=True)
 
-        count, total_lines = process_file(path, conn, skip_lines)
+        count, total_lines, unknown = process_file(path, conn, skip_lines)
+        unknown_event_types |= unknown
         now = datetime.now(timezone.utc).isoformat()
         current_size = path.stat().st_size
 
@@ -184,9 +190,15 @@ def run_import(conn: sqlite3.Connection,
             f"({files_skipped} skipped), "
             f"{events_handled} events handled."
         )
+        if unknown_event_types:
+            print("\nWARNING: unknown event types encountered (not handled, not in ignore list):")
+            for et in sorted(unknown_event_types):
+                print(f"  {et}")
+            print("Consider adding handlers or adding them to KNOWN_IGNORED_EVENTS.")
 
     return {
         "files_processed": files_processed,
         "files_skipped": files_skipped,
         "events_handled": events_handled,
+        "unknown_event_types": unknown_event_types,
     }

@@ -605,3 +605,81 @@ HANDLERS: dict[str, Any] = {
     "MissionCompleted":          handle_mission_completed,
     "PowerplayMerits":           handle_powerplay_merits,
 }
+
+# Event types we have consciously decided not to handle.
+# Any event type found in journals that is in neither HANDLERS nor this set
+# is considered unknown and reported at the end of an import run.
+KNOWN_IGNORED_EVENTS: frozenset[str] = frozenset({
+    # Inventory / loadout snapshots
+    "ShipLocker", "Loadout", "StoredModules", "Materials", "SuitLoadout",
+    "EngineerProgress", "Backpack", "Cargo", "StoredShips", "BackpackChange",
+    "CollectItems", "MaterialCollected",
+    # UI / ambient noise
+    "Music", "ReceiveText", "SendText", "FSDTarget", "StartJump",
+    "ReservoirReplenished", "NavRoute", "NavRouteClear", "DockingRequested",
+    "Friends", "UnderAttack",
+    # Movement / status
+    "Disembark", "Embark", "Touchdown", "Liftoff",
+    "SupercruiseEntry", "SupercruiseExit", "SupercruiseDestinationDrop",
+    "FuelScoop", "ApproachBody", "LeaveBody", "ApproachSettlement",
+    "LaunchSRV", "DockSRV", "SRVDestroyed",
+    # Ship / station interactions
+    "Docked", "Undocked", "DockingGranted", "DockingDenied",
+    "DockingCancelled", "DockingTimeout",
+    "ShieldState", "HullDamage", "HeatWarning", "HeatDamage",
+    "JetConeDamage", "JetConeBoost", "CockpitBreached",
+    "RefuelAll", "RefuelPartial", "RepairAll", "Repair", "AfmuRepairs",
+    "BuyAmmo", "BuyDrones", "SellDrones", "Synthesis",
+    "LaunchDrone", "RepairDrone", "RestockVehicle",
+    "EjectCargo", "CollectCargo", "CargoTransfer",
+    # Modules / outfitting
+    "ModuleBuy", "ModuleSell", "ModuleStore", "ModuleRetrieve", "ModuleSwap",
+    "ModuleSellRemote", "FetchRemoteModule", "ModuleInfo", "MassModuleStore",
+    "Outfitting", "Shipyard", "ShipyardBuy", "ShipyardNew", "ShipyardSwap",
+    "ShipyardTransfer", "ShipyardRedeem", "ShipRedeemed",
+    # Suits / on-foot
+    "SwitchSuitLoadout", "CreateSuitLoadout", "DeleteSuitLoadout",
+    "RenameSuitLoadout", "LoadoutEquipModule",
+    "BuySuit", "SellSuit", "UpgradeSuit",
+    "BuyWeapon", "SellWeapon", "UpgradeWeapon",
+    "BookDropship", "DropshipDeploy", "BookTaxi",
+    "UseConsumable", "DropItems",
+    "TradeMicroResources", "BuyMicroResources", "SellMicroResources",
+    # Combat
+    "ShipTargeted", "FactionKillBond", "Bounty",
+    "Interdicted", "Interdiction", "EscapeInterdiction",
+    "PVPKill", "Died", "Resurrect", "SelfDestruct", "SystemsShutdown",
+    "Scanned", "DataScanned", "DatalinkScan", "DatalinkVoucher",
+    "NavBeaconScan", "USSDrop",
+    "CommitCrime", "CrimeVictim", "PayFines", "PayBounties", "RedeemVoucher",
+    # Mining
+    "MiningRefined", "ProspectedAsteroid", "AsteroidCracked",
+    # Trading
+    "MarketBuy", "MarketSell", "Market", "CargoDepot", "SearchAndRescue",
+    # Materials / engineering
+    "MaterialTrade", "MaterialDiscovered", "TechnologyBroker",
+    "EngineerCraft", "EngineerContribution",
+    # Missions
+    "MissionAccepted", "MissionAbandoned", "MissionFailed", "MissionRedirected",
+    "CommunityGoal", "CommunityGoalJoin", "CommunityGoalReward", "CommunityGoalDiscard",
+    # Fleet carriers
+    "CarrierJump", "CarrierJumpRequest", "CarrierStats", "CarrierLocation",
+    "CarrierTradeOrder", "CarrierDepositFuel", "CarrierFinance",
+    "CarrierBankTransfer", "CarrierCrewServices", "CarrierDockingPermission",
+    "FCMaterials",
+    # Powerplay
+    "Powerplay", "PowerplayRank", "PowerplaySalary", "PowerplayCollect",
+    "PowerplayDeliver", "PowerplayFastTrack", "PowerplayJoin", "PowerplayLeave",
+    # Social / squadrons / wings
+    "WingAdd", "WingJoin", "WingLeave", "WingInvite",
+    "SquadronStartup", "SquadronPromotion", "JoinedSquadron", "InvitedToSquadron",
+    # Colonisation
+    "ColonisationConstructionDepot", "ColonisationContribution",
+    "DeliverPowerMicroResources",
+    # FSS progress (body count already captured via DiscoveryScan / FSSAllBodiesFound)
+    "FSSDiscoveryScan",
+    # Session bookkeeping / misc
+    "Fileheader", "Commander", "Shutdown", "Progress", "Reputation",
+    "Missions", "Passengers", "SetUserShipName", "Screenshot",
+    "BuyExplorationData", "Resupply",
+})
