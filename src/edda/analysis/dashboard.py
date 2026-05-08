@@ -1342,6 +1342,57 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None) -> s
 # Star-class catalogue
 # ---------------------------------------------------------------------------
 
+_STAR_CLASS_GROUPS: list[tuple[str, list[str]]] = [
+    ("Main Sequence Stars",    ["O", "B", "A", "F", "G", "K", "M"]),
+    ("Giants and Supergiants", ["A_BlueWhiteSuperGiant", "B_BlueWhiteSuperGiant",
+                                "K_OrangeGiant", "M_RedGiant", "M_RedSuperGiant"]),
+    ("Proto Stars",            ["AeBe", "TTS"]),
+    ("Carbon Stars",           ["C", "CH", "CHd", "CJ", "CN", "CS", "MS", "S"]),
+    ("Wolf-Rayet Stars",       ["W", "WC", "WN", "WNC", "WO"]),
+    ("White Dwarfs",           ["D", "DA", "DAB", "DAV", "DAZ", "DB", "DBV",
+                                "DC", "DCV", "DO", "DOV", "DQ", "DX"]),
+    ("Neutron Stars",          ["N"]),
+    ("Black Holes",            ["H", "SupermassiveBlackHole"]),
+    ("Brown Dwarfs",           ["L", "T", "Y"]),
+]
+
+
+def _star_group_panel_html(group_name: str, group_df: pd.DataFrame) -> str:
+    n_classes  = group_df["star_class"].nunique()
+    n_systems  = len(group_df)
+    tot_bodies = int(group_df["body_count"].sum())
+    avg_bodies = group_df["body_count"].mean() if n_systems > 0 else 0.0
+
+    card = _stats_card([
+        ("Star classes",      f"{n_classes:,}"),
+        ("Systems",           f"{n_systems:,}"),
+        ("Total bodies",      f"{tot_bodies:,}"),
+        ("Avg bodies/system", f"{avg_bodies:.1f}"),
+    ])
+
+    by_class = (
+        group_df.groupby("star_class")
+        .agg(systems=("star_class", "count"),
+             bodies=("body_count", "sum"),
+             avg_bodies=("body_count", "mean"))
+        .reset_index()
+        .sort_values("systems", ascending=False)
+    )
+    rows = "".join(
+        f"<tr><td>{r['star_class']}</td>"
+        f'<td class="num">{int(r["systems"]):,}</td>'
+        f'<td class="num">{int(r["bodies"]):,}</td>'
+        f'<td class="num">{r["avg_bodies"]:.1f}</td></tr>'
+        for _, r in by_class.iterrows()
+    )
+    table = (
+        '<div class="table-wrap"><table class="detail-table"><thead>'
+        "<tr><th>Class</th><th>Systems</th><th>Bodies</th><th>Avg bodies</th></tr>"
+        f'</thead><tbody>{rows}</tbody></table></div>'
+    )
+    return card + table
+
+
 def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
                         star_body_df: pd.DataFrame | None = None) -> str:
     if star_df.empty:
@@ -1352,19 +1403,19 @@ def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
         for sc, grp in star_body_df.groupby("star_class", sort=False):
             body_by_class[sc] = grp
 
-    list_items = []
+    # Build per-class panels
+    sc_idx = 0
     panels: dict[str, str] = {}
+    sc_panel_ids: dict[str, str] = {}
 
     for star_class, grp in star_df.groupby("star_class", sort=True):
-        panel_id        = f"sc-{len(list_items)}"
-        n_systems       = len(grp)
-        total_bodies    = int(grp["body_count"].sum())
-        bio_systems     = int((grp["bodies_with_bio"] > 0).sum())
-        first_disc_sys  = int(grp["has_first_disc"].sum())
-        avg_bodies      = grp["body_count"].mean()
-
-        label = f"{star_class} ({n_systems:,})"
-        list_items.append((label, panel_id))
+        panel_id       = f"sc-{sc_idx}"
+        sc_idx        += 1
+        n_systems      = len(grp)
+        total_bodies   = int(grp["body_count"].sum())
+        bio_systems    = int((grp["bodies_with_bio"] > 0).sum())
+        first_disc_sys = int(grp["has_first_disc"].sum())
+        avg_bodies     = grp["body_count"].mean()
 
         card = _stats_card([
             ("Systems",            f"{n_systems:,}"),
@@ -1448,12 +1499,83 @@ def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
             )
 
         panels[panel_id] = card + star_prop_block + top_block
+        sc_panel_ids[star_class] = panel_id
 
-    def _panel(label, panel_id, is_first):
-        active = " active" if is_first else ""
-        return f'<div class="detail-panel{active}" id="{panel_id}">{panels[panel_id]}</div>'
+    # Build group structure — known groups in defined order, then any unrecognised classes
+    classes_in_db = set(star_df["star_class"].unique())
+    assigned: set[str] = set()
+    star_groups: list[tuple[str, str, list[tuple[str, str]]]] = []
+    g_idx = sc_idx
 
-    return _detail_layout("sc", list_items, _panel, overview_html=_star_overview(star_df))
+    for group_name, members in _STAR_CLASS_GROUPS:
+        present = [c for c in members if c in classes_in_db]
+        if not present:
+            continue
+        group_panel_id = f"sc-{g_idx}"
+        g_idx += 1
+        group_df = star_df[star_df["star_class"].isin(present)]
+        panels[group_panel_id] = _star_group_panel_html(group_name, group_df)
+        class_items = [
+            (f"{c} ({len(star_df[star_df['star_class'] == c]):,})", sc_panel_ids[c])
+            for c in members if c in classes_in_db
+        ]
+        star_groups.append((group_name, group_panel_id, class_items))
+        assigned.update(present)
+
+    leftover = classes_in_db - assigned
+    if leftover:
+        group_panel_id = f"sc-{g_idx}"
+        group_df = star_df[star_df["star_class"].isin(leftover)]
+        panels[group_panel_id] = _star_group_panel_html("Other", group_df)
+        class_items = [
+            (f"{c} ({len(star_df[star_df['star_class'] == c]):,})", sc_panel_ids[c])
+            for c in sorted(leftover)
+        ]
+        star_groups.append(("Other", group_panel_id, class_items))
+
+    overview_panel_id = "sc-overview"
+    panels[overview_panel_id] = _star_overview(star_df)
+
+    # Build list block
+    btns = [
+        f'<button class="detail-btn detail-overview-btn active" '
+        f'data-panel="{overview_panel_id}">Overview</button>',
+        '<input type="search" placeholder="Search…">',
+    ]
+    for group_name, group_panel_id, class_items in star_groups:
+        sc_btns = "".join(
+            f'<button class="detail-btn species-btn" data-panel="{sc_pid}" '
+            f'data-label="{sc_label}">{sc_label}</button>'
+            for sc_label, sc_pid in class_items
+        )
+        btns.append(
+            f'<div class="genus-group">'
+            f'<button class="detail-btn genus-header" data-panel="{group_panel_id}" '
+            f'data-label="{group_name}">{group_name}</button>'
+            f'<div class="genus-items">{sc_btns}</div>'
+            f'</div>'
+        )
+
+    list_block = f'<div class="detail-list">{"".join(btns)}</div>'
+
+    # Build content block
+    panel_html = [
+        f'<div class="detail-panel active" id="{overview_panel_id}">'
+        f'{panels[overview_panel_id]}</div>'
+    ]
+    for group_name, group_panel_id, class_items in star_groups:
+        panel_html.append(
+            f'<div class="detail-panel" id="{group_panel_id}">'
+            f'{panels[group_panel_id]}</div>'
+        )
+        for sc_label, sc_pid in class_items:
+            panel_html.append(
+                f'<div class="detail-panel" id="{sc_pid}">'
+                f'{panels[sc_pid]}</div>'
+            )
+
+    content_block = f'<div class="detail-content">{"".join(panel_html)}</div>'
+    return f'<div class="detail-layout">{list_block}{content_block}</div>'
 
 
 # ---------------------------------------------------------------------------
