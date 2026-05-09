@@ -299,6 +299,7 @@ section h2 {
 .species-btn { padding-left: 26px !important; font-size: 0.80em; }
 .legacy-tag { font-size: 0.62em; background: rgba(100,70,10,0.4); color: #bbaa55; border: 1px solid #8a7030; border-radius: 3px; padding: 0 3px; margin-left: 5px; vertical-align: middle; letter-spacing: 0.03em; }
 
+
 .detail-content { min-width: 0; }
 .detail-panel { display: none; }
 .detail-panel.active { display: block; }
@@ -596,6 +597,13 @@ def _img(b64: str | None) -> str:
     if not b64:
         return '<p class="empty-note">No data available.</p>'
     return f'<img class="static-chart" src="data:image/png;base64,{b64}">'
+
+
+def _spectral_img(b64: str | None) -> str:
+    """Spectral distribution chart rendered at natural resolution."""
+    if not b64:
+        return ""
+    return f'<img class="static-chart" src="data:image/png;base64,{b64}" style="margin-top:8px">'
 
 
 def _plotly(fig: go.Figure | None) -> str:
@@ -1051,7 +1059,8 @@ def _star_overview(star_df: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 
 def _species_panel_html(species: str, grp: pd.DataFrame,
-                        genus: str, species_values: dict) -> str:
+                        genus: str, species_values: dict,
+                        spectral_chart: str = "") -> str:
     n_scans    = len(grp)
     n_first    = int(grp["is_first_log"].sum())
     base_val   = species_values.get(species, int(grp["base_value"].iloc[0]))
@@ -1089,12 +1098,13 @@ def _species_panel_html(species: str, grp: pd.DataFrame,
     )
     return (
         f'<p style="color:#6677aa;font-size:0.82em;margin-bottom:12px">{genus}</p>'
-        + card + table
+        + card + table + spectral_chart
     )
 
 
 def _genus_panel_html(genus: str, genus_df: pd.DataFrame,
-                      species_values: dict) -> str:
+                      species_values: dict,
+                      spectral_chart: str = "") -> str:
     n_species = genus_df["species"].nunique()
     n_scans   = len(genus_df)
     n_first   = int(genus_df["is_first_log"].sum())
@@ -1134,7 +1144,22 @@ def _genus_panel_html(genus: str, genus_df: pd.DataFrame,
         "<th>Base value</th><th>Est. total</th><th>Planet types</th>"
         f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
     )
-    return card + table
+    return card + table + spectral_chart
+
+
+_STAR_CLASS_GROUPS: list[tuple[str, list[str]]] = [
+    ("Main Sequence Stars",    ["O", "B", "A", "F", "G", "K", "M"]),
+    ("Giants and Supergiants", ["A_BlueWhiteSuperGiant", "B_BlueWhiteSuperGiant",
+                                "K_OrangeGiant", "M_RedGiant", "M_RedSuperGiant"]),
+    ("Proto Stars",            ["AeBe", "TTS"]),
+    ("Carbon Stars",           ["C", "CH", "CHd", "CJ", "CN", "CS", "MS", "S"]),
+    ("Wolf-Rayet Stars",       ["W", "WC", "WN", "WNC", "WO"]),
+    ("White Dwarfs",           ["D", "DA", "DAB", "DAV", "DAZ", "DB", "DBV",
+                                "DC", "DCV", "DO", "DOV", "DQ", "DX"]),
+    ("Neutron Stars",          ["N"]),
+    ("Black Holes",            ["H", "SupermassiveBlackHole"]),
+    ("Brown Dwarfs",           ["L", "T", "Y"]),
+]
 
 
 _HORIZONS_GENERA = frozenset({
@@ -1143,7 +1168,9 @@ _HORIZONS_GENERA = frozenset({
 })
 
 
-def _build_species_section(oval_df: pd.DataFrame) -> str:
+def _build_species_section(oval_df: pd.DataFrame,
+                           sp_charts: dict[str, str] | None = None,
+                           genus_charts: dict[str, str] | None = None) -> str:
     if oval_df.empty:
         return '<p class="empty-note">No organic scan data.</p>'
 
@@ -1166,11 +1193,13 @@ def _build_species_section(oval_df: pd.DataFrame) -> str:
             sp_id = f"sp-{sp_idx}"
             sp_idx += 1
             species_items.append((species, sp_id))
+            chart = _spectral_img((sp_charts or {}).get(species)) if sp_charts else ""
             panels[sp_id] = _species_panel_html(
-                species, sp_grp, genus_label, SPECIES_VALUES)
+                species, sp_grp, genus_label, SPECIES_VALUES, chart)
 
+        chart = _spectral_img((genus_charts or {}).get(genus_label)) if genus_charts else ""
         panels[genus_panel_id] = _genus_panel_html(
-            genus_label, genus_df, SPECIES_VALUES)
+            genus_label, genus_df, SPECIES_VALUES, chart)
         genus_groups.append((genus_label, genus_panel_id, species_items))
 
     # Non-legacy genera first (alphabetical), then Horizons legacy genera (alphabetical)
@@ -1223,7 +1252,8 @@ def _build_species_section(oval_df: pd.DataFrame) -> str:
 # Body-type catalogue
 # ---------------------------------------------------------------------------
 
-def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None) -> str:
+def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None,
+                        bt_charts: dict[str, str] | None = None) -> str:
     if bval_df.empty:
         return '<p class="empty-note">No body data available.</p>'
 
@@ -1329,7 +1359,8 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None) -> s
             f'</thead><tbody>{"".join(top_rows)}</tbody></table></div>'
         )
 
-        panels[panel_id] = card + prop_block + top_block
+        chart = _spectral_img((bt_charts or {}).get(planet_class)) if bt_charts else ""
+        panels[panel_id] = card + prop_block + top_block + chart
 
     def _panel(label, panel_id, is_first):
         active = " active" if is_first else ""
@@ -1342,19 +1373,6 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None) -> s
 # Star-class catalogue
 # ---------------------------------------------------------------------------
 
-_STAR_CLASS_GROUPS: list[tuple[str, list[str]]] = [
-    ("Main Sequence Stars",    ["O", "B", "A", "F", "G", "K", "M"]),
-    ("Giants and Supergiants", ["A_BlueWhiteSuperGiant", "B_BlueWhiteSuperGiant",
-                                "K_OrangeGiant", "M_RedGiant", "M_RedSuperGiant"]),
-    ("Proto Stars",            ["AeBe", "TTS"]),
-    ("Carbon Stars",           ["C", "CH", "CHd", "CJ", "CN", "CS", "MS", "S"]),
-    ("Wolf-Rayet Stars",       ["W", "WC", "WN", "WNC", "WO"]),
-    ("White Dwarfs",           ["D", "DA", "DAB", "DAV", "DAZ", "DB", "DBV",
-                                "DC", "DCV", "DO", "DOV", "DQ", "DX"]),
-    ("Neutron Stars",          ["N"]),
-    ("Black Holes",            ["H", "SupermassiveBlackHole"]),
-    ("Brown Dwarfs",           ["L", "T", "Y"]),
-]
 
 
 def _star_group_panel_html(group_name: str, group_df: pd.DataFrame) -> str:
@@ -1777,11 +1795,47 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     ))
 
     # ------------------------------------------------------------------
+    # Spectral distribution charts (species + body-type catalogues)
+    # ------------------------------------------------------------------
+    print("  Spectral distribution charts...")
+    df_sp_spec  = st.species_spectral_distribution(conn)
+    df_bt_spec  = st.body_type_spectral_distribution(conn)
+    sc_totals   = st.planet_counts_by_spectral_class(conn)
+
+    sp_charts: dict[str, str] = {}
+    for sp, grp in df_sp_spec.groupby("species"):
+        b64 = ch.plot_spectral_distribution(
+            grp.set_index("spectral_class")["count"],
+            title=str(sp), totals=sc_totals)
+        if b64:
+            sp_charts[sp] = b64
+
+    genus_charts: dict[str, str] = {}
+    if not df_sp_spec.empty and not df_oval.empty:
+        for genus_label, genus_oval in df_oval.groupby("genus"):
+            genus_label = genus_label or "Unknown"
+            sp_in_genus = genus_oval["species"].dropna().unique()
+            grp = (df_sp_spec[df_sp_spec["species"].isin(sp_in_genus)]
+                   .groupby("spectral_class")["count"].sum())
+            b64 = ch.plot_spectral_distribution(
+                grp, title=str(genus_label), totals=sc_totals)
+            if b64:
+                genus_charts[genus_label] = b64
+
+    bt_charts: dict[str, str] = {}
+    for bt, grp in df_bt_spec.groupby("planet_class"):
+        b64 = ch.plot_spectral_distribution(
+            grp.set_index("spectral_class")["count"],
+            title=str(bt), totals=sc_totals)
+        if b64:
+            bt_charts[bt] = b64
+
+    # ------------------------------------------------------------------
     # Species Catalogue
     # ------------------------------------------------------------------
     print("  Species catalogue...")
     sections.append(_section("species-cat", "Species Catalogue",
-        _build_species_section(df_oval)
+        _build_species_section(df_oval, sp_charts, genus_charts)
     ))
 
     # ------------------------------------------------------------------
@@ -1789,7 +1843,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     # ------------------------------------------------------------------
     print("  Body-type catalogue...")
     sections.append(_section("body-cat", "Body-type Catalogue",
-        _build_body_section(df_bval, cur_pos)
+        _build_body_section(df_bval, cur_pos, bt_charts)
     ))
 
     # ------------------------------------------------------------------

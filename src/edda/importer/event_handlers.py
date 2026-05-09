@@ -136,68 +136,141 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             WHERE system_address = ? AND star_class IS NULL
         """, (subtype, sa))
 
+    comp = event.get("Composition") or {}
+    parent_star_id = None
+    for parent in event.get("Parents", []):
+        if "Star" in parent:
+            parent_star_id = parent["Star"]
+            break
+
     row: dict[str, Any] = {
-        "system_address":    sa,
-        "body_id":           body_id,
-        "name":              body_name,
-        "body_type":         body_type,
-        "subtype":           subtype,
-        "distance_ls":       event.get("DistanceFromArrivalLS"),
-        "radius_km":         event.get("Radius", 0) / 1000.0 if event.get("Radius") else None,
-        "mass_em":           event.get("StellarMass") if body_type == "Star" else event.get("MassEM"),
-        "age_my":            event.get("Age_MY") if body_type == "Star" else None,
-        "surface_gravity_g": event.get("SurfaceGravity", 0) / 9.80665 if event.get("SurfaceGravity") else None,
-        "surface_temp_k":    event.get("SurfaceTemperature"),
-        "surface_pressure":  event.get("SurfacePressure"),
+        "system_address":     sa,
+        "body_id":            body_id,
+        "name":               body_name,
+        "body_type":          body_type,
+        "subtype":            subtype,
+        "subclass":           event.get("Subclass") if body_type == "Star" else None,
+        "distance_ls":        event.get("DistanceFromArrivalLS"),
+        "radius_km":          event.get("Radius", 0) / 1000.0 if event.get("Radius") else None,
+        "mass_em":            event.get("StellarMass") if body_type == "Star" else event.get("MassEM"),
+        "age_my":             event.get("Age_MY") if body_type == "Star" else None,
+        "surface_gravity_g":  event.get("SurfaceGravity", 0) / 9.80665 if event.get("SurfaceGravity") else None,
+        "surface_temp_k":     event.get("SurfaceTemperature"),
+        "surface_pressure":   event.get("SurfacePressure"),
         "atmosphere_type":    atmo_type,
         "atmosphere_density": _atmosphere_density(atmo_type),
         "atmosphere_he_pct":  he_pct,
-        "volcanism":         event.get("Volcanism"),
-        "is_landable":       int(bool(event.get("Landable"))),
-        "terraform_state":   event.get("TerraformState"),
-        "bio_signals":       0,
-        "geo_signals":       0,
-        "was_mapped":        0,
-        "first_discovered":  int(not event.get("WasDiscovered", True)),
-        "first_mapped":      int(not event.get("WasMapped", True)),
-        "scanned_at":        event.get("timestamp"),
+        "volcanism":          event.get("Volcanism"),
+        "is_landable":        int(bool(event.get("Landable"))),
+        "terraform_state":    event.get("TerraformState"),
+        "bio_signals":        0,
+        "geo_signals":        0,
+        "was_mapped":         0,
+        "first_discovered":   int(not event.get("WasDiscovered", True)),
+        "first_mapped":       int(not event.get("WasMapped", True)),
+        "scanned_at":         event.get("timestamp"),
+        "luminosity":         event.get("Luminosity") if body_type == "Star" else None,
+        "absolute_magnitude": event.get("AbsoluteMagnitude") if body_type == "Star" else None,
+        "orbital_period":     event.get("OrbitalPeriod"),
+        "semi_major_axis":    event.get("SemiMajorAxis"),
+        "eccentricity":       event.get("Eccentricity"),
+        "orbital_inclination":event.get("OrbitalInclination"),
+        "periapsis":          event.get("Periapsis"),
+        "ascending_node":     event.get("AscendingNode"),
+        "mean_anomaly":       event.get("MeanAnomaly"),
+        "rotation_period":    event.get("RotationPeriod"),
+        "axial_tilt":         event.get("AxialTilt"),
+        "composition_ice":    comp.get("Ice"),
+        "composition_rock":   comp.get("Rock"),
+        "composition_metal":  comp.get("Metal"),
+        "reserve_level":      event.get("ReserveLevel"),
+        "parent_star_id":     parent_star_id,
     }
 
     conn.execute("""
         INSERT INTO bodies (
-            system_address, body_id, name, body_type, subtype,
+            system_address, body_id, name, body_type, subtype, subclass,
             distance_ls, radius_km, mass_em, age_my, surface_gravity_g,
             surface_temp_k, surface_pressure, atmosphere_type,
             atmosphere_density, atmosphere_he_pct, volcanism, is_landable,
             terraform_state, bio_signals, geo_signals,
-            was_mapped, first_discovered, first_mapped, scanned_at
+            was_mapped, first_discovered, first_mapped, scanned_at,
+            luminosity, absolute_magnitude,
+            orbital_period, semi_major_axis, eccentricity,
+            orbital_inclination, periapsis, ascending_node, mean_anomaly,
+            rotation_period, axial_tilt,
+            composition_ice, composition_rock, composition_metal,
+            reserve_level, parent_star_id
         ) VALUES (
-            :system_address, :body_id, :name, :body_type, :subtype,
+            :system_address, :body_id, :name, :body_type, :subtype, :subclass,
             :distance_ls, :radius_km, :mass_em, :age_my, :surface_gravity_g,
             :surface_temp_k, :surface_pressure, :atmosphere_type,
             :atmosphere_density, :atmosphere_he_pct, :volcanism, :is_landable,
             :terraform_state, :bio_signals, :geo_signals,
-            :was_mapped, :first_discovered, :first_mapped, :scanned_at
+            :was_mapped, :first_discovered, :first_mapped, :scanned_at,
+            :luminosity, :absolute_magnitude,
+            :orbital_period, :semi_major_axis, :eccentricity,
+            :orbital_inclination, :periapsis, :ascending_node, :mean_anomaly,
+            :rotation_period, :axial_tilt,
+            :composition_ice, :composition_rock, :composition_metal,
+            :reserve_level, :parent_star_id
         )
         ON CONFLICT(system_address, body_id) DO UPDATE SET
-            subtype            = COALESCE(excluded.subtype, bodies.subtype),
-            distance_ls        = COALESCE(excluded.distance_ls, bodies.distance_ls),
-            radius_km          = COALESCE(excluded.radius_km, bodies.radius_km),
-            mass_em            = COALESCE(excluded.mass_em, bodies.mass_em),
-            age_my             = COALESCE(excluded.age_my, bodies.age_my),
-            surface_gravity_g  = COALESCE(excluded.surface_gravity_g, bodies.surface_gravity_g),
-            surface_temp_k     = COALESCE(excluded.surface_temp_k, bodies.surface_temp_k),
-            surface_pressure   = COALESCE(excluded.surface_pressure, bodies.surface_pressure),
-            atmosphere_type    = COALESCE(excluded.atmosphere_type, bodies.atmosphere_type),
-            atmosphere_density = COALESCE(excluded.atmosphere_density, bodies.atmosphere_density),
-            atmosphere_he_pct  = COALESCE(excluded.atmosphere_he_pct, bodies.atmosphere_he_pct),
-            volcanism          = COALESCE(excluded.volcanism, bodies.volcanism),
-            is_landable        = COALESCE(excluded.is_landable, bodies.is_landable),
-            terraform_state    = COALESCE(excluded.terraform_state, bodies.terraform_state),
-            first_discovered   = MAX(excluded.first_discovered, bodies.first_discovered),
-            first_mapped       = MAX(excluded.first_mapped, bodies.first_mapped),
-            scanned_at         = COALESCE(bodies.scanned_at, excluded.scanned_at)
+            subtype             = COALESCE(excluded.subtype,             bodies.subtype),
+            subclass            = COALESCE(excluded.subclass,            bodies.subclass),
+            distance_ls         = COALESCE(excluded.distance_ls,         bodies.distance_ls),
+            radius_km           = COALESCE(excluded.radius_km,           bodies.radius_km),
+            mass_em             = COALESCE(excluded.mass_em,             bodies.mass_em),
+            age_my              = COALESCE(excluded.age_my,              bodies.age_my),
+            surface_gravity_g   = COALESCE(excluded.surface_gravity_g,   bodies.surface_gravity_g),
+            surface_temp_k      = COALESCE(excluded.surface_temp_k,      bodies.surface_temp_k),
+            surface_pressure    = COALESCE(excluded.surface_pressure,    bodies.surface_pressure),
+            atmosphere_type     = COALESCE(excluded.atmosphere_type,     bodies.atmosphere_type),
+            atmosphere_density  = COALESCE(excluded.atmosphere_density,  bodies.atmosphere_density),
+            atmosphere_he_pct   = COALESCE(excluded.atmosphere_he_pct,   bodies.atmosphere_he_pct),
+            volcanism           = COALESCE(excluded.volcanism,           bodies.volcanism),
+            is_landable         = COALESCE(excluded.is_landable,         bodies.is_landable),
+            terraform_state     = COALESCE(excluded.terraform_state,     bodies.terraform_state),
+            first_discovered    = MAX(excluded.first_discovered,         bodies.first_discovered),
+            first_mapped        = MAX(excluded.first_mapped,             bodies.first_mapped),
+            scanned_at          = COALESCE(bodies.scanned_at,            excluded.scanned_at),
+            luminosity          = COALESCE(excluded.luminosity,          bodies.luminosity),
+            absolute_magnitude  = COALESCE(excluded.absolute_magnitude,  bodies.absolute_magnitude),
+            orbital_period      = COALESCE(excluded.orbital_period,      bodies.orbital_period),
+            semi_major_axis     = COALESCE(excluded.semi_major_axis,     bodies.semi_major_axis),
+            eccentricity        = COALESCE(excluded.eccentricity,        bodies.eccentricity),
+            orbital_inclination = COALESCE(excluded.orbital_inclination, bodies.orbital_inclination),
+            periapsis           = COALESCE(excluded.periapsis,           bodies.periapsis),
+            ascending_node      = COALESCE(excluded.ascending_node,      bodies.ascending_node),
+            mean_anomaly        = COALESCE(excluded.mean_anomaly,        bodies.mean_anomaly),
+            rotation_period     = COALESCE(excluded.rotation_period,     bodies.rotation_period),
+            axial_tilt          = COALESCE(excluded.axial_tilt,          bodies.axial_tilt),
+            composition_ice     = COALESCE(excluded.composition_ice,     bodies.composition_ice),
+            composition_rock    = COALESCE(excluded.composition_rock,    bodies.composition_rock),
+            composition_metal   = COALESCE(excluded.composition_metal,   bodies.composition_metal),
+            reserve_level       = COALESCE(excluded.reserve_level,       bodies.reserve_level),
+            parent_star_id      = COALESCE(excluded.parent_star_id,      bodies.parent_star_id)
     """, row)
+
+    for mat in event.get("Materials", []):
+        conn.execute("""
+            INSERT INTO body_materials (system_address, body_id, name, percent)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(system_address, body_id, name) DO UPDATE SET
+                percent = excluded.percent
+        """, (sa, body_id, mat.get("Name"), mat.get("Percent")))
+
+    for ring in event.get("Rings", []):
+        conn.execute("""
+            INSERT INTO rings (system_address, body_id, name, ring_class, mass_mt, inner_rad, outer_rad)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(system_address, body_id, name) DO UPDATE SET
+                ring_class = excluded.ring_class,
+                mass_mt    = excluded.mass_mt,
+                inner_rad  = excluded.inner_rad,
+                outer_rad  = excluded.outer_rad
+        """, (sa, body_id, ring.get("Name"), ring.get("RingClass"),
+              ring.get("MassMT"), ring.get("InnerRad"), ring.get("OuterRad")))
 
 
 def handle_saa_signals_found(event: dict, conn: sqlite3.Connection) -> None:
@@ -287,7 +360,7 @@ def handle_scan_organic(event: dict, conn: sqlite3.Connection) -> None:
         return
     _ensure_system(sa, event, conn)
     conn.execute("""
-        INSERT INTO organic_scans
+        INSERT OR IGNORE INTO organic_scans
             (system_address, body_id, timestamp, scan_state,
              genus, genus_localised, species, species_localised,
              variant, variant_localised)

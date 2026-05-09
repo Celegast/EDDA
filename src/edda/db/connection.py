@@ -25,6 +25,23 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
         "ALTER TABLE journal_files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE journal_files ADD COLUMN lines_processed INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE bodies ADD COLUMN age_my REAL",
+        "ALTER TABLE bodies ADD COLUMN subclass INTEGER",
+        "ALTER TABLE bodies ADD COLUMN luminosity TEXT",
+        "ALTER TABLE bodies ADD COLUMN absolute_magnitude REAL",
+        "ALTER TABLE bodies ADD COLUMN orbital_period REAL",
+        "ALTER TABLE bodies ADD COLUMN semi_major_axis REAL",
+        "ALTER TABLE bodies ADD COLUMN eccentricity REAL",
+        "ALTER TABLE bodies ADD COLUMN orbital_inclination REAL",
+        "ALTER TABLE bodies ADD COLUMN periapsis REAL",
+        "ALTER TABLE bodies ADD COLUMN ascending_node REAL",
+        "ALTER TABLE bodies ADD COLUMN mean_anomaly REAL",
+        "ALTER TABLE bodies ADD COLUMN rotation_period REAL",
+        "ALTER TABLE bodies ADD COLUMN axial_tilt REAL",
+        "ALTER TABLE bodies ADD COLUMN composition_ice REAL",
+        "ALTER TABLE bodies ADD COLUMN composition_rock REAL",
+        "ALTER TABLE bodies ADD COLUMN composition_metal REAL",
+        "ALTER TABLE bodies ADD COLUMN reserve_level TEXT",
+        "ALTER TABLE bodies ADD COLUMN parent_star_id INTEGER",
         "ALTER TABLE systems ADD COLUMN total_bodies INTEGER",
         "ALTER TABLE systems ADD COLUMN fss_complete INTEGER DEFAULT 0",
     ):
@@ -32,6 +49,27 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
             conn.execute(sql)
         except Exception:
             pass
+
+    # Deduplicate organic_scans (idempotent — no-op if already clean), then
+    # create the unique index that prevents future duplicates on --force reimport.
+    try:
+        conn.execute("""
+            DELETE FROM organic_scans
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM organic_scans
+                GROUP BY system_address, body_id, timestamp, scan_state,
+                         COALESCE(species, '')
+            )
+        """)
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_orgscans_unique
+            ON organic_scans(system_address, body_id, timestamp, scan_state,
+                             COALESCE(species, ''))
+        """)
+    except Exception:
+        pass
+
     conn.commit()
     return conn
 

@@ -14,6 +14,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Boxel analytics** — He% vs average system exploration value chart; identifies He% ranges associated with high-value boxels (>3.5 MCr average)
 - **Body value catalogue** — per-body estimated exploration credit value using the Odyssey credit formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds; property ranges (min/avg/max with body names) and most-of-type-in-system records per planet type
 - **Star-class catalogue** — per-star-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and body names; most-of-class-in-system records
+- **Spectral distribution charts** — per-species and per-body-type line charts showing how scan counts and occurrence percentages are distributed across the detailed spectral subclass of the dominant star (G2, F5, K3, …); useful for cross-referencing community data such as the He% vs Stratum Tectonicas chart
 - **Personal Records** — top-10 lists for most bodies, most stars, most bio signals, top exobiology value, and top exploration value per system; all tables show distance to current commander position
 - **Vicinity Hints** — automatically surfaces interesting boxels within 5,000 ly of the commander's current position:
   - *Potential helium-rich boxel* — mean He% above 28.5% with ≥3 gas giants
@@ -250,8 +251,8 @@ The dashboard sections:
 | Bodies | Planet-type and star-class charts; body value breakdown; He% vs average system value line chart |
 | Exobiology | Species scan log, value breakdown by species and planet type, interactive genus × planet-type heatmap with row/column totals, 3D species bubble maps, He% vs Stratum Tectonicas probability chart |
 | Income & Travel | Cumulative exploration and exobiology credits; jump distance histogram |
-| Species Catalogue | Per-species scan counts, first-log tracking, estimated and actual sale values, with planet-type breakdown |
-| Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure) with min/avg/max and body names; most bodies of that type in one system; sortable detail table with distance to commander |
+| Species Catalogue | Per-species scan counts, first-log tracking, estimated and actual sale values, with planet-type breakdown; spectral distribution chart per species and per genus |
+| Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure) with min/avg/max and body names; most bodies of that type in one system; sortable detail table with distance to commander; spectral distribution chart per body type |
 | Star-class Catalogue | Per-star-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
 
 ## Vicinity Hints
@@ -268,6 +269,23 @@ When actual He% data is not yet available (e.g. before a full reimport), Helium 
 
 A *boxel* is the system-name prefix after stripping the trailing index number — e.g. `Prooe Drye ZQ-K d9` for systems named `Prooe Drye ZQ-K d9-N`. All systems in a boxel share the same stellar forge properties.
 
+## Spectral Distribution Charts
+
+Each species and body-type panel in the Species Catalogue and Body-type Catalogue includes a spectral distribution chart showing:
+
+- **Blue line / fill (left axis)** — absolute scan count per spectral subclass of the dominant star (O0–O9, B0–B9, …, Y0–Y9, TTS, AeBe, giants, S/MS, and aggregated groups for C★, W-R, WD, NS, BH)
+- **Orange dashed line (right axis)** — occurrence percentage: what fraction of all scanned planets orbiting that spectral subclass contain this species or body type
+
+The x-axis covers every subclass 0–9 for each stellar class that appears in the data, so spacing is always uniform within a class. Rare compact types (white dwarfs, neutron stars, black holes, Wolf-Rayet, carbon stars) are aggregated into single labelled points separated by gaps for readability.
+
+### Parent-star attribution
+
+A body's dominant star is determined from the `Parents` array in the journal `Scan` event, which lists the body hierarchy from the body outward to the system barycentre. EDDA walks this chain and takes the first `Star` entry as the body's direct parent star. This is stored as `parent_star_id` in the `bodies` table.
+
+For bodies where no parent star is recorded (e.g. the primary star itself), the system's primary star (lowest body ID matching the system's star class) is used as a fallback.
+
+**Multi-star systems**: in systems with companion stars, a body that physically orbits a secondary or tertiary star will be attributed to that companion, not to the system primary. For example, Stratum Tectonicas found in a system whose primary is an F star but whose secondary is a G star will appear under G in the chart if the body orbits the G companion directly. This correctly reflects the stellar environment experienced by the organism, but means the charts can show species under star classes that the community considers unexpected — worth cross-checking in-game when a surprising attribution is found.
+
 ## Database
 
 The SQLite database lives at `.edda/ed.db` (created automatically on first import). Key tables:
@@ -276,7 +294,9 @@ The SQLite database lives at `.edda/ed.db` (created automatically on first impor
 |---|---|
 | `systems` | Every visited star system with galactic coordinates, primary star class, total body count, and FSS-complete flag |
 | `jumps` | Every FSD jump in chronological order with distance and fuel data |
-| `bodies` | All scanned bodies with physical properties (including `age_my` and `mass_em` in solar units for stars), first-discovery/mapping flags, and helium percentage (`atmosphere_he_pct`) for gas giants |
+| `bodies` | All scanned bodies with physical properties; stars include `subclass`, `luminosity`, `absolute_magnitude`; planets include orbital elements, rotation, axial tilt, rock/ice/metal composition, and `reserve_level` for ringed bodies |
+| `body_materials` | Surface material percentages per body (from the `Materials` array in `Scan` events) |
+| `rings` | Ring data per body (name, class, mass, inner/outer radius) from the `Rings` array in `Scan` events |
 | `bio_signals` | Biological signal genus entries per body from DSS probing |
 | `organic_scans` | Individual organism scan events (Log / Sample / Analyse states) |
 | `organic_sales` | Vista Genomics sale records with first-log bonus tracking |

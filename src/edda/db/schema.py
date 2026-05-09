@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS bodies (
     name                TEXT    NOT NULL,
     body_type           TEXT    NOT NULL,           -- 'Planet', 'Star', 'Belt'
     subtype             TEXT,                       -- e.g. 'High metal content body'
+    subclass            INTEGER,                    -- spectral subclass 0-9 (stars only)
     distance_ls         REAL,
     radius_km           REAL,
     mass_em             REAL,                       -- Earth masses (planets) / Solar masses (stars)
@@ -76,8 +77,57 @@ CREATE TABLE IF NOT EXISTS bodies (
     first_discovered    INTEGER DEFAULT 0,          -- WasDiscovered=false at scan time
     first_mapped        INTEGER DEFAULT 0,          -- WasMapped=false at scan time
     scanned_at          TEXT,
+    -- Stars
+    luminosity          TEXT,                       -- luminosity class (Va, Ib, VII, etc.)
+    absolute_magnitude  REAL,
+    -- Orbital elements (planets, moons, non-primary stars)
+    orbital_period      REAL,                       -- seconds
+    semi_major_axis     REAL,                       -- metres
+    eccentricity        REAL,
+    orbital_inclination REAL,                       -- degrees
+    periapsis           REAL,                       -- degrees (argument of periapsis)
+    ascending_node      REAL,                       -- degrees
+    mean_anomaly        REAL,                       -- degrees
+    -- Rotation
+    rotation_period     REAL,                       -- seconds
+    axial_tilt          REAL,                       -- radians
+    -- Planet composition (Rock/Ice/Metal fractions)
+    composition_ice     REAL,
+    composition_rock    REAL,
+    composition_metal   REAL,
+    -- Rings
+    reserve_level       TEXT,                       -- PristineResources, MajorResources, etc.
+    -- Parent hierarchy
+    parent_star_id      INTEGER,                    -- body_id of nearest star ancestor (from Parents array)
     UNIQUE(system_address, body_id)
 );
+
+-- Surface material percentages per body (Materials array in Scan events).
+CREATE TABLE IF NOT EXISTS body_materials (
+    id              INTEGER PRIMARY KEY,
+    system_address  INTEGER NOT NULL REFERENCES systems(system_address),
+    body_id         INTEGER NOT NULL,
+    name            TEXT    NOT NULL,
+    percent         REAL    NOT NULL,
+    UNIQUE(system_address, body_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_body_materials ON body_materials(system_address, body_id);
+
+-- Rings around bodies (Rings array in Scan events).
+CREATE TABLE IF NOT EXISTS rings (
+    id              INTEGER PRIMARY KEY,
+    system_address  INTEGER NOT NULL REFERENCES systems(system_address),
+    body_id         INTEGER NOT NULL,
+    name            TEXT    NOT NULL,
+    ring_class      TEXT,
+    mass_mt         REAL,
+    inner_rad       REAL,
+    outer_rad       REAL,
+    UNIQUE(system_address, body_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rings ON rings(system_address, body_id);
 
 CREATE INDEX IF NOT EXISTS idx_bodies_system   ON bodies(system_address);
 CREATE INDEX IF NOT EXISTS idx_bodies_subtype  ON bodies(subtype);

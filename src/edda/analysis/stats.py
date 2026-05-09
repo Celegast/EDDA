@@ -465,6 +465,7 @@ def body_values_table(conn: sqlite3.Connection) -> pd.DataFrame:
                b.radius_km,
                b.scanned_at,
                s.name           AS system_name,
+               s.star_class,
                s.x, s.y, s.z
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
@@ -513,7 +514,8 @@ def organic_values_table(conn: sqlite3.Connection,
                {_genus_sql('sc')} AS genus_localised,
                b.name             AS body_name,
                b.subtype          AS planet_class,
-               s.name             AS system_name
+               s.name             AS system_name,
+               s.star_class
         FROM organic_scans sc
         LEFT JOIN bodies  b ON b.system_address = sc.system_address
                             AND b.body_id        = sc.body_id
@@ -574,6 +576,7 @@ def organic_values_table(conn: sqlite3.Connection,
             "system_name":       r["system_name"],
             "body_name":         r["body_name"],
             "planet_class":      r["planet_class"],
+            "star_class":        r["star_class"],
             "genus":             r["genus_localised"],
             "species":           sp,
             "is_first_log":      is_first_log,
@@ -583,6 +586,87 @@ def organic_values_table(conn: sqlite3.Connection,
         })
 
     return pd.DataFrame(rows)
+
+
+def _spectral_class_cte() -> str:
+    """
+    CTE that resolves each body to the spectral class of its nearest star ancestor.
+    Uses parent_star_id (from the journal Parents array) when available, falling
+    back to the system's primary star (lowest body_id matching systems.star_class).
+    """
+    return """
+        sys_primary AS (
+            SELECT b.system_address,
+                   b.body_id,
+                   b.subtype || COALESCE(CAST(b.subclass AS TEXT), '') AS spectral_class,
+                   ROW_NUMBER() OVER (PARTITION BY b.system_address ORDER BY b.body_id) AS rn
+            FROM bodies b
+            JOIN systems s ON s.system_address = b.system_address
+            WHERE b.body_type = 'Star' AND b.subtype = s.star_class
+        ),
+        body_star AS (
+            SELECT b.system_address,
+                   b.body_id,
+                   COALESCE(
+                       ps.subtype || COALESCE(CAST(ps.subclass AS TEXT), ''),
+                       sp.spectral_class
+                   ) AS spectral_class
+            FROM bodies b
+            LEFT JOIN bodies ps ON ps.system_address = b.system_address
+                                AND ps.body_id = b.parent_star_id
+                                AND ps.body_type = 'Star'
+            LEFT JOIN sys_primary sp ON sp.system_address = b.system_address AND sp.rn = 1
+        )
+    """
+
+
+def species_spectral_distribution(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Count of completed organic scans per species, broken down by nearest-star spectral subclass."""
+    sql = f"""
+        WITH {_spectral_class_cte()}
+        SELECT sc.species_localised AS species,
+               bs.spectral_class,
+               COUNT(*)             AS count
+        FROM organic_scans sc
+        JOIN body_star bs ON bs.system_address = sc.system_address
+                          AND bs.body_id = sc.body_id
+        WHERE sc.scan_state = 'Analyse'
+          AND sc.species_localised IS NOT NULL
+        GROUP BY sc.species_localised, bs.spectral_class
+    """
+    return pd.read_sql_query(sql, conn)
+
+
+def body_type_spectral_distribution(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Count of scanned planets per planet type, broken down by nearest-star spectral subclass."""
+    sql = f"""
+        WITH {_spectral_class_cte()}
+        SELECT p.subtype AS planet_class,
+               bs.spectral_class,
+               COUNT(*)  AS count
+        FROM bodies p
+        JOIN body_star bs ON bs.system_address = p.system_address
+                          AND bs.body_id = p.body_id
+        WHERE p.body_type = 'Planet'
+          AND p.subtype IS NOT NULL
+        GROUP BY p.subtype, bs.spectral_class
+    """
+    return pd.read_sql_query(sql, conn)
+
+
+def planet_counts_by_spectral_class(conn: sqlite3.Connection) -> pd.Series:
+    """Total scanned planets per nearest-star spectral class (denominator for % charts)."""
+    sql = f"""
+        WITH {_spectral_class_cte()}
+        SELECT bs.spectral_class, COUNT(*) AS total
+        FROM bodies p
+        JOIN body_star bs ON bs.system_address = p.system_address
+                          AND bs.body_id = p.body_id
+        WHERE p.body_type = 'Planet' AND p.subtype IS NOT NULL
+        GROUP BY bs.spectral_class
+    """
+    df = pd.read_sql_query(sql, conn)
+    return df.set_index("spectral_class")["total"]
 
 
 def species_system_locations(conn: sqlite3.Connection,

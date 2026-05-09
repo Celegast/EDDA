@@ -877,3 +877,260 @@ def plot_boxel_he_vs_value(df: pd.DataFrame,
     if out_path is None:
         return fig
     _write_interactive(fig, out_path)
+
+
+# ---------------------------------------------------------------------------
+# Spectral class distribution (catalogue panels)
+# ---------------------------------------------------------------------------
+
+_SPECTRAL_ORDER = [f"{c}{n}" for c in "OBAFGKMLTY" for n in range(10)]
+
+# Non-main-sequence expandable prefixes (each expanded 0-9 only if present in data).
+# Placed in chart order: proto-stars after Y, then giants, then S/MS.
+_EXTRA_EXPANDABLE: list[str] = [
+    "TTS", "AeBe",                          # proto-stars
+    "O_BlueWhiteSuperGiant",                # O supergiant
+    "B_BlueWhiteSuperGiant",                # B supergiant
+    "A_BlueWhiteSuperGiant",                # A supergiant
+    "F_WhiteSuperGiant",                    # F supergiant
+    "G_WhiteSuperGiant",                    # G supergiant
+    "K_OrangeGiant", "K_OrangeSuperGiant",  # K giant/supergiant
+    "M_RedGiant",    "M_RedSuperGiant",     # M giant/supergiant
+    "MS", "S",                              # S-type/MS-type
+]
+
+# Short display labels for chart tick marks (prefix → abbreviated form)
+_BASE_SHORT: dict[str, str] = {
+    "TTS": "TTS", "AeBe": "AeBe",
+    "O_BlueWhiteSuperGiant": "O_BSG",
+    "B_BlueWhiteSuperGiant": "B_BSG",
+    "A_BlueWhiteSuperGiant": "A_BSG",
+    "F_WhiteSuperGiant":     "F_WSG",
+    "G_WhiteSuperGiant":     "G_WSG",
+    "K_OrangeGiant":         "K_OG",
+    "K_OrangeSuperGiant":    "K_OSG",
+    "M_RedGiant":            "M_RG",
+    "M_RedSuperGiant":       "M_RSG",
+    "MS": "MS", "S": "S",
+}
+
+# Remaining special types collapsed to single aggregated points.
+_COMPACT_GROUP_DEFS: list[tuple[str, list[str]]] = [
+    ("C★", [
+        "C", "CH", "CHd", "CJ", "CN", "CS",
+        *[f"C{n}"   for n in range(10)],
+        *[f"CJ{n}"  for n in range(10)],
+        *[f"CN{n}"  for n in range(10)],
+        *[f"CS{n}"  for n in range(10)],
+        *[f"CH{n}"  for n in range(10)],
+        *[f"CHd{n}" for n in range(10)],
+    ]),
+    ("W-R", [
+        "W", "WN", "WNC", "WC", "WO",
+        *[f"WN{n}"  for n in range(10)],
+        *[f"WNC{n}" for n in range(10)],
+        *[f"WC{n}"  for n in range(10)],
+        *[f"WO{n}"  for n in range(10)],
+        *[f"W{n}"   for n in range(10)],
+    ]),
+    ("WD", [
+        "D", "DA", "DAB", "DAO", "DAZ", "DAV",
+        "DB", "DBZ", "DBV", "DO", "DOV", "DQ", "DC", "DCV", "DX",
+        *[f"D{n}"   for n in range(10)],
+        *[f"DA{n}"  for n in range(10)],
+        *[f"DB{n}"  for n in range(10)],
+        *[f"DC{n}"  for n in range(10)],
+        *[f"DO{n}"  for n in range(10)],
+    ]),
+    ("NS", ["N", *[f"N{n}" for n in range(10)]]),
+    ("BH", ["H", *[f"H{n}" for n in range(10)]]),
+]
+
+_COMPACT_GROUP_ORDER  = [g for g, _ in _COMPACT_GROUP_DEFS]
+_COMPACT_KEY_TO_GROUP: dict[str, str] = {
+    k: group for group, keys in _COMPACT_GROUP_DEFS for k in keys
+}
+
+
+def plot_spectral_distribution(counts: pd.Series,
+                                title: str = "",
+                                totals: pd.Series | None = None) -> str | None:
+    """
+    Line chart of scan/body count by detailed spectral subclass (G2, F5, …).
+    counts: Series indexed by spectral_class strings, values are integer counts.
+    totals: optional Series of total planet counts per spectral class (same index);
+            when provided a second right y-axis shows the occurrence percentage.
+    Returns a base64 PNG string, or None if no data.
+
+    Main-sequence (OBAFGKMLTY) and expandable non-MS classes (TTS, AeBe, giants,
+    S, MS) are each shown as a full 0-9 series — only if at least one subclass
+    entry is present in the data, so the chart never grows needlessly wide.
+    Remaining types (C★, W-R, WD, NS, BH) collapse to single aggregated points.
+    Labels appear at *0 and *5 for expanded classes; always for compact points.
+    """
+    if counts.empty:
+        return None
+
+    # Drop any non-string index entries (e.g. NaN / float from NULL rows)
+    counts = counts[counts.index.map(lambda k: isinstance(k, str))]
+    if counts.empty:
+        return None
+
+    index_set = set(counts.index)
+
+    # ── Collect expandable bases (only when at least one subclass present) ────
+    expandable_bases: list[str] = []
+    seen: set[str] = set()
+
+    # Main sequence (single-char, from hot→cool order)
+    for k in _SPECTRAL_ORDER:
+        base = k[0]
+        if base not in seen and k in index_set:
+            seen.add(base)
+            expandable_bases.append(base)
+
+    # Extra expandable (multi-char or non-OBAFGKMLTY single-char)
+    for base in _EXTRA_EXPANDABLE:
+        if base not in seen and any(f"{base}{n}" in index_set for n in range(10)):
+            seen.add(base)
+            expandable_bases.append(base)
+
+    # Build key→base lookup and full expanded key list
+    key_to_base: dict[str, str] = {}
+    expanded_keys: list[str] = []
+    for base in expandable_bases:
+        for n in range(10):
+            k = f"{base}{n}"
+            expanded_keys.append(k)
+            key_to_base[k] = base
+    expanded_set = set(expanded_keys)
+
+    # ── Aggregate remaining keys into compact display points ──────────────────
+    group_totals: dict[str, float] = {}
+    unmatched: list[str] = []
+    for k in index_set:
+        if k in expanded_set:
+            continue
+        # Bare extra-expandable prefix without digit (very rare) → fold into *0
+        for base in _EXTRA_EXPANDABLE:
+            if k == base and base in seen:
+                group_totals[f"{base}0"] = group_totals.get(f"{base}0", 0.0) + float(counts[k])
+                break
+        else:
+            group = _COMPACT_KEY_TO_GROUP.get(k)
+            if group:
+                group_totals[group] = group_totals.get(group, 0.0) + float(counts[k])
+            else:
+                unmatched.append(k)
+
+    compact_keys = [g for g in _COMPACT_GROUP_ORDER if g in group_totals]
+    other_keys   = sorted(set(unmatched))
+
+    # ── Build combined value series (NaN spacers between compact points) ───────
+    # Each compact group label gets 3 blank NaN-valued positions before it so
+    # the rotated tick labels don't overlap.  Spacers are identified by a
+    # sentinel prefix "_sp" and are excluded from separators/labels.
+    _COMPACT_GAP = 3
+
+    compact_section: list[tuple[str, float]] = []
+    for i, g in enumerate(compact_keys + other_keys):
+        if i > 0:
+            for j in range(_COMPACT_GAP):
+                compact_section.append((f"_sp{i}_{j}", float("nan")))
+        val = group_totals[g] if g in group_totals else (
+            float(counts[g]) if g in index_set else 0.0)
+        compact_section.append((g, val))
+
+    compact_section_keys = [k for k, _ in compact_section]
+    compact_section_ys   = [v for _, v in compact_section]
+    spacer_set = {k for k in compact_section_keys if k.startswith("_sp")}
+
+    all_keys = expanded_keys + compact_section_keys
+    if not all_keys:
+        return None
+
+    def _val(k: str) -> float:
+        if k in group_totals:
+            return group_totals[k]
+        return float(counts[k]) if k in index_set else 0.0
+
+    ys = [_val(k) for k in expanded_keys] + compact_section_ys
+
+    # ── Labels (short form for long prefixes; *0/*5 for expanded) ─────────────
+    labels: list[str] = []
+    for k in all_keys:
+        if k in spacer_set:
+            labels.append("")
+        elif k in expanded_set:
+            base   = key_to_base[k]
+            digit  = k[len(base):]          # single digit character
+            short  = _BASE_SHORT.get(base, base)
+            labels.append(f"{short}{digit}" if digit in ("0", "5") else "")
+        else:
+            labels.append(k)
+
+    xs = list(range(len(all_keys)))
+
+    # ── Compute percentage series if totals provided ───────────────────────────
+    pct_ys: list[float] | None = None
+    if totals is not None and not totals.empty:
+        def _pct(k: str, y: float) -> float:
+            if k in spacer_set or np.isnan(y):
+                return float("nan")
+            if k in expanded_set:
+                denom = float(totals.get(k, 0) or 0)
+            else:
+                # Compact group key: sum totals for all member spectral classes
+                denom = sum(
+                    float(totals.get(orig_k, 0) or 0)
+                    for orig_k, grp in _COMPACT_KEY_TO_GROUP.items()
+                    if grp == k
+                )
+            return (y / denom * 100.0) if denom > 0 else float("nan")
+
+        pct_ys = [_pct(k, y) for k, y in zip(all_keys, ys)]
+
+    fig, ax = plt.subplots(figsize=(9, 1.8))
+    display_title = f"Spectral Distribution – {title}" if title else "Spectral Distribution"
+    ax.set_title(display_title, fontsize=6.5, color="#9999cc", pad=3)
+    ax.plot(xs, ys, color="#4488cc", linewidth=1.5, zorder=3)
+    ax.fill_between(xs, ys, alpha=0.18, color="#4488cc", zorder=2)
+
+    if pct_ys is not None:
+        ax2 = ax.twinx()
+        ax2.plot(xs, pct_ys, color="#cc8833", linewidth=1.2,
+                 linestyle="--", zorder=4, alpha=0.85)
+        ax2.set_ylabel("%", fontsize=7, color="#cc8833")
+        ax2.tick_params(axis="y", labelsize=6, colors="#cc8833")
+        ax2.set_ylim(bottom=0)
+        ax2.yaxis.set_major_locator(mticker.MaxNLocator(integer=False, nbins=3))
+        ax2.spines["right"].set_color("#cc8833")
+        ax2.yaxis.grid(True, color="#cc8833", linewidth=0.4,
+                       alpha=0.15, linestyle="-", zorder=0)
+
+    # Dashed separators between expanded classes; solid line before compact section
+    prev_base: str | None = None
+    compact_separator_drawn = False
+    for i, key in enumerate(all_keys):
+        if key in spacer_set:
+            continue
+        if key in expanded_set:
+            base = key_to_base[key]
+            if prev_base is not None and base != prev_base:
+                ax.axvline(i - 0.5, color="#334466", linewidth=0.6, linestyle="--", zorder=1)
+            prev_base = base
+        elif not compact_separator_drawn and i > 0:
+            ax.axvline(i - 0.5, color="#556688", linewidth=0.9, linestyle="-", zorder=1)
+            compact_separator_drawn = True
+
+    ax.set_xticks(xs)
+    ax.set_xticklabels(labels, rotation=90, fontsize=5.5)
+    ax.tick_params(axis="y", labelsize=7)
+    ax.set_xlim(-0.5, len(xs) - 0.5)
+    ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=4))
+    ax.set_ylabel("Count", fontsize=7)
+    ax.yaxis.grid(True, color="white", linewidth=0.4, alpha=0.12, linestyle="-", zorder=0)
+    ax.set_axisbelow(True)
+
+    return _fig_to_b64(fig)
