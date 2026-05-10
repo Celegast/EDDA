@@ -2,6 +2,33 @@
 
 A personal exploration analytics tool for Elite Dangerous. Parses your journal files into a local SQLite database and produces statistics, charts, galaxy maps, and a self-contained HTML dashboard.
 
+## Screenshots
+
+**System Maps**
+
+![System map modal showing a multi-body system tree with rings, bio icons, and a galaxy minimap](docs/screenshots/system-map.png)
+
+**Interactive 3D Maps**
+
+![Interactive 3D galaxy map](docs/screenshots/3d-map.png)
+
+**Overview & Vicinity Hints**
+
+![Overview section with key stats and vicinity hints](docs/screenshots/overview.png)
+
+**Species Catalogue**
+
+![Exobiology species catalogue with spectral distribution chart](docs/screenshots/species-catalogue.png)
+
+**Body-type Catalogue**
+
+![Body-type catalogue with property ranges](docs/screenshots/body-catalogue.png)
+
+**Exobiology Analysis**
+
+![He% vs Tectonicas](docs/screenshots/metallicity-vs-tectonicas.png)
+
+
 ## Features
 
 - **Journal importer** — incrementally processes Elite Dangerous journal files; resumes partially-imported files (e.g. when the game was open during import) without duplicating data; idempotent re-runs skip already-imported files
@@ -12,10 +39,13 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Valuable regions** — rate-normalised sector maps showing ELW, Water World, terraformable, and bio-signal density per visited system; galactic-height (Y) correlation charts; star-class correlation charts
 - **Exobiology charts** — species distribution, value breakdown by planet type, 3D species bubble maps, and a He% vs Stratum Tectonicas probability chart (mirrors the community "Boxel Helium vs Tectonicas" chart)
 - **Boxel analytics** — He% vs average system exploration value chart; identifies He% ranges associated with high-value boxels (>3.5 MCr average)
-- **Body value catalogue** — per-body estimated exploration credit value using the Odyssey credit formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds; property ranges (min/avg/max with body names) and most-of-type-in-system records per planet type
-- **Star-class catalogue** — per-star-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and body names; most-of-class-in-system records
+- **Body value catalogue** — per-body estimated exploration credit value using the Odyssey formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds; property ranges (min/avg/max with body names) and most-of-type-in-system records per planet type
+- **Star-class catalogue** — per-star-class system and body statistics grouped by star type (main sequence, giants and supergiants, proto-stars, carbon stars, Wolf-Rayet, white dwarfs, neutron stars, black holes); property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and body names; most-of-class-in-system records
+- **Species catalogue** — species grouped by genus with per-genus overview panels and per-species drill-down; first-log tracking; scan counts, estimated and actual sale values; planet-type breakdown per species
 - **Spectral distribution charts** — per-species and per-body-type line charts showing how scan counts and occurrence percentages are distributed across the detailed spectral subclass of the dominant star (G2, F5, K3, …); useful for cross-referencing community data such as the He% vs Stratum Tectonicas chart
-- **Personal Records** — top-10 lists for most bodies, most stars, most bio signals, top exobiology value, and top exploration value per system; all tables show distance to current commander position
+- **System map** — interactive canvas-based system diagram, opened by clicking any system name in the dashboard; shows all bodies in their hierarchical tree layout with scaled icons, ring indicators, first-discovered badges, terraformable highlights, rich tooltips (surface properties, bio species, ring details), a two-column icon legend, and a galaxy minimap showing the system's position relative to Sol, Colonia, and Beagle Point
+- **Clickable system links** — system and body name references throughout the dashboard (Personal Records, Property Ranges tables, Vicinity Hints) open the system map modal on click
+- **Personal Records** — top-10 lists for most bodies, most stars, most bio signals, top exobiology value, and top exploration value per system; all tables show distance to current commander position; Miscellaneous personal bests (highest/lowest gravity, hottest/coldest surface, largest/smallest radius, longest jump)
 - **Vicinity Hints** — automatically surfaces interesting boxels within 5,000 ly of the commander's current position:
   - *Potential helium-rich boxel* — mean He% above 28.5% with ≥3 gas giants
   - *Potential Stratum Tectonicas boxel* — He% in community-identified sweet spots (24.2–24.5% or 25.9–26.5%)
@@ -41,7 +71,7 @@ setup.bat
 ```powershell
 .\setup.ps1
 ```
-> If you see a script execution error, run it without changing system policy:
+> If you see a script execution error, run it without changing execution policy:
 > `powershell.exe -ExecutionPolicy Bypass -File .\setup.ps1`
 
 **Linux / macOS:**
@@ -65,7 +95,7 @@ update.bat
 ```powershell
 .\update.ps1
 ```
-> If you see a script execution error, run it without changing system policy:
+> If you see a script execution error, run it without changing execution policy:
 > `powershell.exe -ExecutionPolicy Bypass -File .\update.ps1`
 
 **Linux / macOS:**
@@ -243,17 +273,30 @@ The dashboard sections:
 
 | Section | Contents |
 |---|---|
-| Overview | Key lifetime counts and Vicinity Hints (helium-rich, Tectonicas, and high-value boxels within 5,000 ly) |
-| Personal Records | Top-10 tables for most bodies, most stars, most bio signals, top exobiology value, top exploration value; Miscellaneous personal bests |
+| Overview | Key lifetime counts and Vicinity Hints (helium-rich, Tectonicas, and high-value boxels within 5,000 ly); system names are clickable links |
+| Personal Records | Top-10 tables for most bodies, most stars, most bio signals, top exobiology value, top exploration value; Miscellaneous personal bests (gravity, temperature, radius, longest jump); body and system names are clickable links |
 | Galaxy Maps | Interactive 3D views (all systems, bio signals, first discoveries) and static PNG maps |
 | Sector Map | Interactive 3D sector cube density map |
 | Valuable Regions | Rate-normalised sector maps; body rates vs galactic height and star class; top sectors table |
-| Bodies | Planet-type and star-class charts; body value breakdown; He% vs average system value line chart |
-| Exobiology | Species scan log, value breakdown by species and planet type, interactive genus × planet-type heatmap with row/column totals, 3D species bubble maps, He% vs Stratum Tectonicas probability chart |
+| Bodies | Planet-type and star-class charts (star classes shown in spectral colours with abbreviated labels); body value breakdown; He% vs average system value line chart |
+| Exobiology | Species scan log grouped by genus, value breakdown by species and planet type, interactive genus × planet-type heatmap with row/column totals, 3D species bubble maps, He% vs Stratum Tectonicas probability chart |
 | Income & Travel | Cumulative exploration and exobiology credits; jump distance histogram |
-| Species Catalogue | Per-species scan counts, first-log tracking, estimated and actual sale values, with planet-type breakdown; spectral distribution chart per species and per genus |
-| Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure) with min/avg/max and body names; most bodies of that type in one system; sortable detail table with distance to commander; spectral distribution chart per body type |
-| Star-class Catalogue | Per-star-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
+| Species Catalogue | Per-genus overview panels with per-species drill-down; scan counts, first-log tracking, estimated and actual sale values; planet-type breakdown; spectral distribution chart per species and per genus |
+| Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure) with min/avg/max and body names (clickable); most bodies of that type in one system (clickable); sortable detail table with distance to commander; spectral distribution chart per body type |
+| Star-class Catalogue | Stars grouped by type; per-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
+
+## System Map
+
+Clicking any system name in the dashboard opens a modal with an interactive system diagram rendered on an HTML5 canvas. The diagram shows all scanned bodies arranged in a hierarchical tree:
+
+- **Stars** are sized by type — supergiants largest, main-sequence mid-size, neutron stars and black holes smallest
+- **Planets** are sized by class — gas giants larger than rocky/icy worlds
+- **Rings** are drawn as a tilted ellipse arc passing behind and in front of the body icon (asteroid belts are excluded)
+- **Gold star badge** (★) above the icon marks bodies that were first discovered by the commander
+- **Green labels** highlight terraformable bodies; yellow labels are used otherwise
+- **Tooltips** appear on hover and include: body type, subtype, distance, temperature, gravity, atmosphere, bio signal count with species names, and ring details
+- **Legend** at the bottom explains all icon decorations
+- **Galaxy minimap** alongside the legend shows the system's position in the galaxy with Sol, Colonia, and Beagle Point as reference points
 
 ## Vicinity Hints
 
@@ -296,7 +339,7 @@ The SQLite database lives at `.edda/ed.db` (created automatically on first impor
 | `jumps` | Every FSD jump in chronological order with distance and fuel data |
 | `bodies` | All scanned bodies with physical properties; stars include `subclass`, `luminosity`, `absolute_magnitude`; planets include orbital elements, rotation, axial tilt, rock/ice/metal composition, and `reserve_level` for ringed bodies |
 | `body_materials` | Surface material percentages per body (from the `Materials` array in `Scan` events) |
-| `rings` | Ring data per body (name, class, mass, inner/outer radius) from the `Rings` array in `Scan` events |
+| `rings` | Ring data per body (name, class, mass, inner/outer radius) from the `Rings` array in `Scan` events; asteroid belts are stored here but excluded from ring-icon rendering |
 | `bio_signals` | Biological signal genus entries per body from DSS probing |
 | `organic_scans` | Individual organism scan events (Log / Sample / Analyse states) |
 | `organic_sales` | Vista Genomics sale records with first-log bonus tracking |
