@@ -371,7 +371,7 @@ Exobiology values use the Vista Genomics price table with optional first-log (×
 
 ```
 src/edda/
-├── cli.py                  entry points for all edda-* commands
+├── cli.py                  entry points for all pdm run commands
 ├── db/
 │   ├── schema.py           SQLite schema definition
 │   └── connection.py       open_db(), upsert helpers

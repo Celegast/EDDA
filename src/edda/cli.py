@@ -1,12 +1,12 @@
 """
-Command-line entry points.
+Command-line entry points (run via pdm).
 
-  edda-import     — parse journal files into the database
-  edda-stats      — print summary statistics
-  edda-trip       — print statistics for a specific date range
-  edda-map        — render galaxy maps
-  edda-charts     — render all charts
-  edda-dashboard  — build the single-page HTML dashboard
+  pdm run import     — parse journal files into the database
+  pdm run stats      — print summary statistics
+  pdm run trip       — print statistics for a specific date range
+  pdm run map        — render galaxy maps
+  pdm run charts     — render all charts
+  pdm run dashboard  — build the single-page HTML dashboard
 """
 
 import argparse
@@ -47,7 +47,7 @@ def _out_arg(parser: argparse.ArgumentParser, default: str = "output") -> None:
 
 def cmd_import(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="edda-import",
+        prog="pdm run import",
         description="Import Elite Dangerous journal files into the database.",
     )
     _db_arg(parser)
@@ -82,7 +82,7 @@ def cmd_import(argv: list[str] | None = None) -> None:
 
 def cmd_stats(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="edda-stats",
+        prog="pdm run stats",
         description="Print exploration statistics from the database.",
     )
     _db_arg(parser)
@@ -134,12 +134,12 @@ def cmd_stats(argv: list[str] | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# edda-trip
+# edda trip
 # ---------------------------------------------------------------------------
 
 def cmd_trip(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="edda-trip",
+        prog="pdm run trip",
         description=(
             "Print exploration statistics for a specific date range.\n"
             "Useful for comparing a single expedition against other tools."
@@ -268,7 +268,7 @@ def cmd_trip(argv: list[str] | None = None) -> None:
 
 def cmd_map(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="edda-map",
+        prog="pdm run map",
         description="Render galaxy maps from the database.",
     )
     _db_arg(parser)
@@ -328,7 +328,7 @@ def cmd_map(argv: list[str] | None = None) -> None:
 
 def cmd_charts(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="edda-charts",
+        prog="pdm run charts",
         description="Render exploration charts from the database.",
     )
     _db_arg(parser)
@@ -453,7 +453,7 @@ def cmd_charts(argv: list[str] | None = None) -> None:
 
 def cmd_dashboard(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="edda-dashboard",
+        prog="pdm run dashboard",
         description="Build a single-page HTML dashboard with all analytics.",
     )
     _db_arg(parser)
