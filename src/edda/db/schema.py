@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS bodies (
     reserve_level       TEXT,                       -- PristineResources, MajorResources, etc.
     -- Parent hierarchy
     parent_star_id      INTEGER,                    -- body_id of nearest star ancestor (from Parents array)
+    orbital_parent_id   INTEGER,                    -- body_id of immediate orbital parent (Parents[0], excl. Null)
     UNIQUE(system_address, body_id)
 );
 

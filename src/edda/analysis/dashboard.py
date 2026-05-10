@@ -11,6 +11,7 @@ binary-encoded customdata and hover templates resolve correctly offline.
 """
 
 import base64
+import json
 import math
 import sqlite3
 from importlib.metadata import version as _pkg_version
@@ -380,6 +381,98 @@ section h2 {
     letter-spacing: 0.03em;
 }
 .detail-overview-btn.active { color: #88ccff; }
+
+/* ---- System diagram modal ---- */
+.sys-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.sys-modal.open { display: flex; }
+.sys-modal-bg {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.72);
+}
+.sys-modal-box {
+    position: relative;
+    background: #0b0b1e;
+    border: 1px solid #2a2a55;
+    border-radius: 8px;
+    width: fit-content;
+    max-width: 95vw;
+    box-shadow: 0 0 80px rgba(30,30,120,0.5);
+    overflow: hidden;
+}
+.sys-modal-hdr {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #1e1e44;
+    background: #0d0d22;
+}
+.sys-modal-ttl { font-size: 1em; color: #88aaff; font-weight: 600; }
+.sys-modal-sc  { font-size: 0.8em; color: #6677aa; }
+.sys-modal-ftr {
+    border-top: 1px solid #1e1e44;
+    background: #0d0d22;
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+#gal-canvas, #sys-legend-canvas {
+    display: block;
+    border: 1px solid #1e1e44;
+    border-radius: 3px;
+}
+.sys-modal-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #6677aa;
+    cursor: pointer;
+    font-size: 1.2em;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: color 0.1s, background 0.1s;
+}
+.sys-modal-close:hover { color: #ee8866; background: rgba(255,100,50,0.1); }
+#sys-canvas {
+    display: block;
+    height: auto;
+    cursor: crosshair;
+}
+.sys-tip {
+    position: fixed;
+    background: rgba(8,8,24,0.96);
+    border: 1px solid #2a2a55;
+    border-radius: 4px;
+    padding: 8px 11px;
+    font-size: 0.78em;
+    color: #ccd;
+    pointer-events: none;
+    display: none;
+    max-width: 260px;
+    line-height: 1.65;
+    white-space: nowrap;
+    z-index: 600;
+}
+.sys-tip.visible { display: block; }
+.sys-link {
+    cursor: pointer;
+    color: #88aaff;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+}
+.sys-link:hover { color: #bbddff; }
 """
 
 
@@ -412,6 +505,23 @@ _JS = """
     window.addEventListener('load', function () {
         document.querySelectorAll('.tab-panel.active .plotly-graph-div').forEach(function (div) {
             if (window.Plotly) { try { Plotly.relayout(div, { autosize: true }); } catch (e) {} }
+        });
+
+        // ---- Make every plain-text system-name cell clickable ----
+        if (typeof SYSTEM_DATA === 'undefined') return;
+        var nameSA = {};
+        Object.keys(SYSTEM_DATA).forEach(function(sa) {
+            nameSA[SYSTEM_DATA[sa].name] = sa;
+        });
+        document.querySelectorAll('td').forEach(function(td) {
+            // Only wrap cells that already contain a sys-link span, or are plain text
+            if (td.querySelector('.sys-link')) return;  // already done
+            if (td.children.length !== 0) return;       // has other child elements
+            var txt = td.textContent.trim();
+            var sa  = nameSA[txt];
+            if (!sa) return;
+            td.innerHTML = '<span class="sys-link" data-sa="' + sa + '">' +
+                           td.innerHTML + '</span>';
         });
     });
 
@@ -526,6 +636,715 @@ _JS = """
     });
 
 }());
+
+// ---- System Diagram ----
+
+var _sysData = null, _sysBodies = null;
+
+var _starCols = [
+    ['SupermassiveBlackHole','#150020'],['AeBe','#ffffe0'],['TTS','#ffa030'],
+    ['WNC','#dd44ff'],['WC','#dd44ff'],['WN','#dd44ff'],['WO','#dd44ff'],['W','#dd44ff'],
+    ['DAB','#d0e8ff'],['DAV','#d0e8ff'],['DAZ','#d0e8ff'],['DBV','#d0e8ff'],['DCV','#d0e8ff'],['DOV','#d0e8ff'],
+    ['DA','#d0e8ff'],['DB','#d0e8ff'],['DC','#d0e8ff'],['DO','#d0e8ff'],['DQ','#d0e8ff'],['DX','#d0e8ff'],['D','#d0e8ff'],
+    ['CHd','#e07030'],['CJ','#e07030'],['CN','#e07030'],['CH','#e07030'],['CS','#e08040'],['MS','#e09050'],
+    ['C','#e06020'],['S','#e08040'],
+    ['N','#00e8e8'],['H','#110018'],
+    ['O','#9ac8ff'],['B','#c4e4ff'],['A','#eef4ff'],['F','#fff8e0'],
+    ['G','#ffe870'],['K','#ffb840'],['M','#ff6820'],
+    ['L','#bb2800'],['T','#801800'],['Y','#401000']
+];
+
+function _starCol(sub) {
+    if (!sub) return '#aaaaaa';
+    for (var i = 0; i < _starCols.length; i++) {
+        if (sub.startsWith(_starCols[i][0])) return _starCols[i][1];
+    }
+    return '#cccccc';
+}
+
+function _planetCol(sub, terra) {
+    if (!sub) return '#778899';
+    var s = sub.toLowerCase();
+    if (s === 'earthlike body')           return terra ? '#5aaa70' : '#3a8a5a';
+    if (s === 'water world')              return terra ? '#5588cc' : '#3a5aaa';
+    if (s === 'ammonia world')            return '#aa7730';
+    if (s.includes('metal rich'))         return '#aaaaaa';
+    if (s.includes('high metal content')) return '#887766';
+    if (s.includes('rocky ice'))          return '#667aaa';
+    if (s === 'rocky body')               return terra ? '#aa8844' : '#554433';
+    if (s.includes('icy body'))           return '#99bbcc';
+    if (s.includes('class i gas')    && !s.includes('ii'))  return '#ccaa44';
+    if (s.includes('class ii gas')   && !s.includes('iii')) return '#ee9933';
+    if (s.includes('class iii gas')  && !s.includes('iv'))  return '#cc6622';
+    if (s.includes('class iv gas')   && !s.includes('v'))   return '#cc4422';
+    if (s.includes('class v gas'))        return '#aa2222';
+    if (s.includes('helium rich gas'))    return '#6688aa';
+    if (s.includes('helium gas giant'))   return '#7799bb';
+    if (s.includes('water giant'))        return '#4466aa';
+    if (s.includes('gas giant') || s.includes('sudarsky')) return '#cc9944';
+    return '#778899';
+}
+
+function _bodyPx(b) {
+    if (b.t === 'Star') {
+        var s = (b.s || '').toLowerCase();
+        if (s.includes('supergiant')) return 24;
+        if (s.includes('giant'))      return 19;
+        if (s === 'n')                return 7;
+        if (s.length <= 3 && s.startsWith('d')) return 7;
+        if (s === 'h' || s === 'supermassiveblackhole') return 12;
+        return 15;
+    }
+    var s = (b.s || '').toLowerCase();
+    if (s.includes('gas giant') || s.includes('water giant') || s.includes('sudarsky')) return 12;
+    return 9;
+}
+
+// Galaxy top-view minimap
+// ED coordinates: Sol at (0,0,0), galactic centre ~(25,-21,25900)
+// Top-down view uses X (east-west) and Z (north-south).
+var _GC_X = 25, _GC_Z = 25900, _GAL_R = 52000;
+var _GAL_REFS = [
+    { x: 0,       z: 0,        col: 'rgba(200,200,255,0.75)', r: 1.5, lbl: 'Sol' },
+    { x: -9530.5, z: 19808.1,  col: 'rgba(180,140,255,0.80)', r: 1.5, lbl: 'Colonia' },
+    { x: 1111.6,  z: 65269.8,  col: 'rgba(140,200,255,0.80)', r: 1.5, lbl: 'Beagle Pt' },
+];
+function _drawGalMap(data) {
+    var canvas = document.getElementById('gal-canvas');
+    if (!canvas) return;
+    var W = canvas.width, H = canvas.height;
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#04040f'; ctx.fillRect(0, 0, W, H);
+
+    // Coordinate mapping: show ±_GAL_R around galactic centre
+    function toSX(x) { return (x - _GC_X + _GAL_R) / (_GAL_R * 2) * W; }
+    function toSY(z) { return (1 - (z - _GC_Z + _GAL_R) / (_GAL_R * 2)) * H; }
+
+    // Galaxy disc — radial gradient from GC
+    var gcX = toSX(_GC_X), gcY = toSY(_GC_Z);
+    var gRad = Math.min(W, H) * 0.48;
+    var gal = ctx.createRadialGradient(gcX, gcY, 0, gcX, gcY, gRad);
+    gal.addColorStop(0,    'rgba(255,230,180,0.55)');
+    gal.addColorStop(0.08, 'rgba(200,160,100,0.35)');
+    gal.addColorStop(0.25, 'rgba(120,100,180,0.20)');
+    gal.addColorStop(0.55, 'rgba(60,60,130,0.10)');
+    gal.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.fillStyle = gal;
+    ctx.beginPath(); ctx.ellipse(gcX, gcY, gRad, gRad * 0.55, -0.35, 0, Math.PI * 2); ctx.fill();
+
+    // Galactic centre (Sag A*)
+    ctx.beginPath(); ctx.arc(gcX, gcY, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,220,140,0.9)'; ctx.fill();
+    ctx.font = '8px sans-serif'; ctx.fillStyle = 'rgba(255,220,140,0.7)';
+    ctx.textAlign = 'center'; ctx.fillText('Sag A*', gcX, gcY - 4);
+
+    // Reference points
+    ctx.font = '8px sans-serif';
+    _GAL_REFS.forEach(function(ref) {
+        var rx = toSX(ref.x), ry = toSY(ref.z);
+        ctx.beginPath(); ctx.arc(rx, ry, 2, 0, Math.PI * 2);
+        ctx.fillStyle = ref.col; ctx.fill();
+        ctx.fillStyle = ref.col; ctx.textAlign = 'center';
+        ctx.fillText(ref.lbl, rx, ry - 4);
+    });
+
+    // Current system — cyan crosshair so it stands out from the amber GC
+    if (data.x != null && data.z != null) {
+        var sx = toSX(data.x), sy = toSY(data.z);
+        ctx.strokeStyle = 'rgba(60,220,255,0.8)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(sx - 6, sy); ctx.lineTo(sx + 6, sy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(sx, sy - 6); ctx.lineTo(sx, sy + 6); ctx.stroke();
+        ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#44ddff'; ctx.fill();
+    }
+    ctx.textAlign = 'left';
+}
+
+function _drawLegend() {
+    var canvas = document.getElementById('sys-legend-canvas');
+    if (!canvas) return;
+    var W = canvas.width, H = canvas.height;
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0d0d22'; ctx.fillRect(0, 0, W, H);
+
+    var ir = 7;  // icon body radius
+    var rx = ir * 1.9, ry = ir * 0.48, rot = Math.PI * 0.2;
+    var items = [
+        { lbl: 'Bio signals', col: 'rgba(160,170,200,0.9)',
+          draw: function(x,y) {
+            ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(50,220,100,0.75)'; ctx.lineWidth=1.5; ctx.stroke();
+          }},
+        { lbl: 'Mapped', col: 'rgba(160,170,200,0.9)',
+          draw: function(x,y) {
+            ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(255,200,80,0.55)'; ctx.lineWidth=1.5; ctx.stroke();
+          }},
+        { lbl: 'Has rings', col: 'rgba(160,170,200,0.9)',
+          draw: function(x,y) {
+            ctx.beginPath(); ctx.ellipse(x,y,rx,ry,rot,0,Math.PI); ctx.strokeStyle='rgba(210,210,255,0.7)'; ctx.lineWidth=1; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x,y,rx,ry,rot,Math.PI,Math.PI*2); ctx.strokeStyle='rgba(210,210,255,0.9)'; ctx.lineWidth=1; ctx.stroke();
+          }},
+        { lbl: 'First discovered', col: 'rgba(160,170,200,0.9)',
+          draw: function(x,y) {
+            ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
+            ctx.font='bold 8px sans-serif'; ctx.fillStyle='#ffee44'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+            ctx.fillText('★',x,y-ir-2); ctx.font='11px sans-serif'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+          }},
+        { lbl: 'Terraformable', col: '#66ffaa',
+          draw: function(x,y) {
+            ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
+          }},
+    ];
+
+    // Two columns: items 0-2 left, items 3-4 right
+    var col1x = 16, col2x = W / 2, rowH = 30, startY = 22;
+    items.forEach(function(item, i) {
+        var lx = i < 3 ? col1x : col2x;
+        var ly = startY + (i < 3 ? i : i - 3) * rowH;
+        item.draw(lx + ir, ly);
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = item.col; ctx.textAlign = 'left';
+        ctx.fillText(item.lbl, lx + ir * 2 + 6, ly + 4);
+    });
+}
+
+function openSysModal(sa) {
+    var d = (typeof SYSTEM_DATA !== 'undefined') && SYSTEM_DATA[String(sa)];
+    if (!d) return;
+    _sysData = d;
+    document.getElementById('sys-modal-ttl').textContent = d.name;
+    document.getElementById('sys-modal-sc').textContent  = d.sc ? '(' + d.sc + ')' : '';
+    document.getElementById('sys-modal').classList.add('open');
+    _drawLegend();
+    _drawGalMap(d);
+    requestAnimationFrame(_drawSys);
+}
+
+function closeSysModal() {
+    document.getElementById('sys-modal').classList.remove('open');
+    _sysData = null; _sysBodies = null;
+}
+
+// Radial orrery — kept for reference, not currently active.
+// To reactivate: rename to _drawSys and revert tooltip to use p.r / p.x / p.y.
+function _drawSysOrrery() {
+    var canvas = document.getElementById('sys-canvas');
+    if (!canvas || !_sysData) return;
+    canvas.width = 700; canvas.height = 460;
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#040410'; ctx.fillRect(0, 0, W, H);
+
+    var rng = 7919;
+    function _rn() { rng = (rng * 1664525 + 1013904223) | 0; return (rng >>> 0) / 4294967296; }
+    for (var si = 0; si < 140; si++) {
+        ctx.beginPath();
+        ctx.arc(_rn()*W, _rn()*H, 0.65, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(180,200,255,' + (0.1 + _rn()*0.4).toFixed(2) + ')';
+        ctx.fill();
+    }
+
+    var all     = _sysData.bodies || [];
+    var stars   = all.filter(function(b){ return b.t === 'Star'; });
+    var planets = all.filter(function(b){ return b.t !== 'Star' && b.t !== 'Other' && (b.d || 0) > 0; });
+    planets.sort(function(a, b){ return (a.d||0) - (b.d||0); });
+
+    var cx = W/2, cy = H/2;
+    var maxR = Math.min(W,H)/2 - 38;
+
+    var dists  = planets.map(function(b){ return b.d||0; }).filter(function(d){ return d>0; });
+    var logMin = dists.length ? Math.log10(Math.max(Math.min.apply(null,dists), 0.01)) - 0.5 : 0;
+    var logMax = dists.length ? Math.log10(Math.max.apply(null,dists)) + 0.3 : 4;
+    if (logMax - logMin < 1) logMax = logMin + 1;
+
+    function dToR(d) {
+        if (!d || d <= 0) return 0;
+        var t = (Math.log10(d) - logMin) / (logMax - logMin);
+        return 26 + (maxR - 26) * Math.max(0, Math.min(1, t));
+    }
+
+    var ringDone = {};
+    planets.forEach(function(b) {
+        var rr = Math.round(dToR(b.d) * 4) / 4;
+        if (ringDone[rr]) return;
+        ringDone[rr] = true;
+        ctx.beginPath(); ctx.arc(cx, cy, dToR(b.d), 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(80,100,200,0.09)'; ctx.lineWidth = 0.7; ctx.stroke();
+    });
+
+    var placed = [];
+    var phi = Math.PI * (3 - Math.sqrt(5));
+    planets.forEach(function(b, i) {
+        var r = dToR(b.d), angle = i * phi;
+        placed.push({ x: cx + r*Math.cos(angle), y: cy + r*Math.sin(angle), b: b, r: _bodyPx(b) });
+    });
+    stars.forEach(function(s, i) {
+        var r = (i > 0 && s.d && s.d > 1) ? dToR(s.d) : 0;
+        var angle = (i + 0.5) * 2.1;
+        placed.push({ x: cx + r*Math.cos(angle), y: cy + r*Math.sin(angle), b: s, r: _bodyPx(s) });
+    });
+    _sysBodies = placed;
+
+    placed.forEach(function(p) {
+        var b = p.b, bx = p.x, by = p.y, br = p.r;
+        var col = (b.t === 'Star') ? _starCol(b.s) : _planetCol(b.s, b.e);
+        var isBlackHole = b.t === 'Star' && (b.s === 'H' || b.s === 'SupermassiveBlackHole');
+        if (b.t === 'Star' && !isBlackHole) {
+            var g = ctx.createRadialGradient(bx, by, 0, bx, by, br*3.5);
+            g.addColorStop(0, col); g.addColorStop(0.45, col + '66'); g.addColorStop(1, col + '00');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(bx, by, br*3.5, 0, Math.PI*2); ctx.fill();
+        }
+        if (b.b > 0) {
+            ctx.beginPath(); ctx.arc(bx, by, br + 4, 0, Math.PI*2);
+            ctx.strokeStyle = 'rgba(50,220,100,0.75)'; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI*2);
+        if (isBlackHole) {
+            ctx.fillStyle = '#050010'; ctx.fill();
+            ctx.beginPath(); ctx.arc(bx, by, br + 2, 0, Math.PI*2);
+            ctx.strokeStyle = '#cc33ff'; ctx.lineWidth = 1; ctx.stroke();
+        } else {
+            ctx.fillStyle = col; ctx.fill();
+        }
+        if (b.f) {
+            ctx.fillStyle = '#ffee44'; ctx.font = 'bold 8px sans-serif';
+            ctx.textAlign = 'center'; ctx.fillText('★', bx, by - br - 3);
+        }
+        if (b.w && b.t !== 'Star') {
+            ctx.beginPath(); ctx.arc(bx, by, br + 1.5, 0, Math.PI*2);
+            ctx.strokeStyle = 'rgba(255,200,80,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+    });
+    ctx.textAlign = 'left';
+
+    if (dists.length) {
+        var steps = [0.1,0.3,1,3,10,30,100,300,1000,3000,10000,30000];
+        ctx.font = '9px monospace'; ctx.fillStyle = 'rgba(120,140,200,0.55)';
+        steps.forEach(function(ls) {
+            var r = dToR(ls);
+            if (r >= 28 && r <= maxR + 5) {
+                var angle = -Math.PI * 0.28;
+                ctx.textAlign = 'left';
+                var lbl = ls >= 1 ? Math.round(ls) + ' LS' : ls.toFixed(1) + ' LS';
+                ctx.fillText(lbl, cx + r*Math.cos(angle) + 3, cy + r*Math.sin(angle) - 3);
+            }
+        });
+        ctx.textAlign = 'left';
+    }
+
+    var lx = W - 14, ly = 14, lh = 14;
+    var items = [];
+    if (planets.some(function(b){ return b.b > 0; }))
+        items.push({col:'rgba(50,220,100,0.75)', lbl:'Bio signals', ring:true});
+    if (planets.some(function(b){ return b.f; }))
+        items.push({col:'#ffee44', lbl:'First discovery', star:true});
+    if (planets.some(function(b){ return b.w; }))
+        items.push({col:'rgba(255,200,80,0.55)', lbl:'Mapped', ring:true});
+    ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
+    items.forEach(function(item) {
+        ctx.fillStyle = item.col;
+        if (item.star) ctx.fillText('★ ' + item.lbl, lx, ly);
+        else           ctx.fillText('● ' + item.lbl, lx, ly);
+        ly += lh;
+    });
+    ctx.textAlign = 'left';
+
+    if (!all.length) {
+        ctx.fillStyle = '#446'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('No body data available', W/2, H/2);
+        ctx.textAlign = 'left';
+    }
+}
+
+function _buildTree(data) {
+    var allBodies = data.bodies || [];
+    var bodies = allBodies.filter(function(b) { return b.t === 'Star' || b.t === 'Planet'; });
+    var byId = {};
+    bodies.forEach(function(b) {
+        byId[b.i] = { b: b, children: [], parent: null, sortKey: null,
+                      gx: 0, gy: 0, lvl: 0, cols: 1, rows: 1, x: 0, y: 0 };
+    });
+    // Phase 1: use orbital_parent_id where present
+    bodies.forEach(function(b) {
+        if (b.p == null) return;
+        if (!byId[b.p]) {
+            byId[b.p] = { b: { i: b.p, n: '', t: 'Barycentre', s: '' },
+                           children: [], parent: null, sortKey: null,
+                           gx: 0, gy: 0, lvl: 0, cols: 1, rows: 1, x: 0, y: 0 };
+        }
+        byId[b.i].parent = b.p;
+        byId[b.p].children.push(byId[b.i]);
+    });
+    // Phase 2: name-inference fallback for bodies not yet parented
+    _inferHierarchy(byId, bodies, data.name);
+    // Derive labels / sort-keys for barycentres created in phase 1 (phase 2 already labels its own)
+    var pfx = data.name + ' ';
+    Object.keys(byId).forEach(function(id) {
+        var node = byId[id];
+        if (node.b.t !== 'Barycentre' || node.b.s) return;
+        var stars = node.children.filter(function(c) { return c.b.t === 'Star'; });
+        var ref   = stars.length ? stars : node.children;
+        node.b.s = stars.map(function(c) {
+            var s = c.b.n; return s.indexOf(pfx) === 0 ? s.slice(pfx.length) : s;
+        }).join('');
+        node.sortKey = ref.reduce(function(s, c) { return s + c.b.i; }, 0) / Math.max(ref.length, 1);
+    });
+    // Reassign orphaned non-star/barycentre nodes to the primary star (or root barycentre) as fallback
+    var primaryStar = null;
+    Object.keys(byId).forEach(function(id) {
+        var n = byId[id];
+        if (n.parent != null) return;
+        if (n.b.t === 'Star') {
+            if (!primaryStar || primaryStar.b.t !== 'Star' || n.b.i < primaryStar.b.i) primaryStar = n;
+        } else if (n.b.t === 'Barycentre' && (!primaryStar || primaryStar.b.t !== 'Star')) {
+            if (!primaryStar) primaryStar = n;
+        }
+    });
+    if (primaryStar) {
+        Object.keys(byId).forEach(function(id) {
+            var n = byId[id];
+            if (n.parent != null) return;
+            if (n.b.t === 'Barycentre') return;
+            if (n.b.t === 'Star') {
+                // re-attach numbered companion stars with missing orbital_parent_id (e.g. "5","6","7","8")
+                if (n._tok && n._tok.length === 1 && /^[0-9]+$/.test(n._tok[0]) && n !== primaryStar) {
+                    n.parent = primaryStar.b.i;
+                    primaryStar.children.push(n);
+                }
+                return;
+            }
+            n.parent = primaryStar.b.i;
+            primaryStar.children.push(n);
+        });
+    }
+    var roots = [];
+    Object.keys(byId).forEach(function(id) {
+        var n = byId[id]; if (n && n.parent == null) roots.push(n);
+    });
+    roots.sort(function(a, c) {
+        var ak = a.sortKey != null ? a.sortKey : (a.b.i >= 0 ? a.b.i : 9999);
+        var ck = c.sortKey != null ? c.sortKey : (c.b.i >= 0 ? c.b.i : 9999);
+        if (ak !== ck) return ak - ck;
+        if (a.b.t === 'Star' && c.b.t !== 'Star') return -1;
+        if (a.b.t !== 'Star' && c.b.t === 'Star') return 1;
+        return 0;
+    });
+    function sortKids(n) {
+        n.children.sort(function(a, c) { return a.b.i - c.b.i; });
+        n.children.forEach(sortKids);
+    }
+    roots.forEach(sortKids);
+    return { roots: roots, byId: byId };
+}
+
+function _inferHierarchy(byId, bodies, sysName) {
+    var pfx = sysName + ' ';
+    var bySuffix = {};
+    var nextSynId = -1;
+    bodies.forEach(function(b) {
+        // primary star's name IS the system name — it has no meaningful suffix
+        var suf = (b.n === sysName) ? '' : (b.n.indexOf(pfx) === 0 ? b.n.slice(pfx.length) : b.n);
+        byId[b.i]._sfx = suf;
+        byId[b.i]._tok = suf.trim() ? suf.trim().split(/\\s+/) : [];
+        if (suf) bySuffix[suf] = b.i;
+    });
+    var sorted = bodies.slice().sort(function(a, c) {
+        return byId[a.i]._tok.length - byId[c.i]._tok.length;
+    });
+    sorted.forEach(function(b) {
+        var node = byId[b.i];
+        if (node._tok.length <= 1 || node.parent != null) return;
+        var pSuf = node._tok.slice(0, -1).join(' ');
+        var pId  = bySuffix[pSuf];
+        if (pId != null && byId[pId]) {
+            node.parent = pId;
+            byId[pId].children.push(node);
+        } else if (/^[A-Z]{2,}$/.test(pSuf)) {
+            // Barycenter pattern: "BC 3" → parent "BC".  Stars B and C stay as independent roots;
+            // the × node only owns the bodies explicitly named after it (BC 1, BC 2 …).
+            // sortKey places the × between the referenced stars in the root order.
+            if (bySuffix[pSuf] == null) {
+                var sid = nextSynId--;
+                var letters = pSuf.split('');
+                var refIds  = letters.map(function(l) { return bySuffix[l]; }).filter(function(x) { return x != null; });
+                var sk = refIds.length ? refIds.reduce(function(s, i) { return s + i; }, 0) / refIds.length : 9999;
+                byId[sid] = { b: { i: sid, n: sysName + ' ' + pSuf, t: 'Barycentre', s: pSuf },
+                               children: [], parent: null, sortKey: sk,
+                               gx: 0, gy: 0, lvl: 0, cols: 1, rows: 1, x: 0, y: 0 };
+                bySuffix[pSuf] = sid;
+            }
+            var baryNode = byId[bySuffix[pSuf]];
+            node.parent = baryNode.b.i;
+            baryNode.children.push(node);
+        }
+    });
+}
+
+// Direction is determined by the LAST token of the body's name suffix:
+//   all-digits  ("1","19")      → planet   → children BELOW   (vertical)
+//   all-lowercase ("a","b")     → moon     → children to RIGHT (horizontal)
+//   all-uppercase ("A","BCD")   → star/bary → children to RIGHT (horizontal)
+// Barycentre nodes (synthetic × markers) are always horizontal regardless.
+// Falls back to level-parity for synthetic nodes that carry no _tok.
+function _nodeHoriz(node, lvl) {
+    if (node.b.t === 'Barycentre') return true;
+    if (node._tok && node._tok.length > 0) {
+        var last = node._tok[node._tok.length - 1];
+        if (/^[0-9]+$/.test(last))  return false; // number → planet/companion-star → children below
+        if (/^[a-z]+$/.test(last))  return true; // lowercase → moon → children right
+        if (/^[A-Z]+$/.test(last))  return true; // uppercase → star name → children right
+    }
+    return lvl % 2 === 0;
+}
+
+function _computeSize(node, lvl) {
+    if (!node.children.length) { node.cols = 1; node.rows = 1; return; }
+    var isStar = node.b.t === 'Star' || node.b.t === 'Barycentre';
+    var childLvl = isStar ? 1 : lvl + 1;
+    node.children.forEach(function(c) { _computeSize(c, childLvl); });
+    if (_nodeHoriz(node, lvl)) {
+        node.cols = 1 + node.children.reduce(function(s, c) { return s + c.cols; }, 0);
+        node.rows = node.children.reduce(function(mx, c) { return Math.max(mx, c.rows); }, 1);
+    } else {
+        node.cols = node.children.reduce(function(mx, c) { return Math.max(mx, c.cols); }, 1);
+        node.rows = 1 + node.children.reduce(function(s, c) { return s + c.rows; }, 0);
+    }
+}
+
+function _placeNode(node, gx, gy, lvl) {
+    node.gx = gx; node.gy = gy; node.lvl = lvl;
+    var isStar = node.b.t === 'Star' || node.b.t === 'Barycentre';
+    var childLvl = isStar ? 1 : lvl + 1;
+    var horiz = _nodeHoriz(node, lvl);
+    var off = 1;
+    if (horiz) {
+        node.children.forEach(function(c) { _placeNode(c, gx + off, gy, childLvl); off += c.cols; });
+    } else {
+        node.children.forEach(function(c) { _placeNode(c, gx, gy + off, childLvl); off += c.rows; });
+    }
+}
+
+function _drawSys() {
+    var canvas = document.getElementById('sys-canvas');
+    if (!canvas || !_sysData) return;
+
+    var H_STEP = 52, V_STEP = 36, PAD_L = 50, PAD_T = 38, PAD_B = 20;
+    var ROOT_GAP = 1;  // extra blank row between root-level stars
+
+    var tree  = _buildTree(_sysData);
+    var roots = tree.roots;
+    var totalRows = 0, totalCols = 1;
+    roots.forEach(function(r) {
+        _computeSize(r, 0);
+        _placeNode(r, 0, totalRows, 0);
+        totalRows += r.rows + ROOT_GAP;
+        if (r.cols > totalCols) totalCols = r.cols;
+    });
+    totalRows = Math.max(1, totalRows - ROOT_GAP);  // remove trailing gap
+
+    canvas.width  = Math.max(600, PAD_L + totalCols * H_STEP + 30);
+    canvas.height = Math.max(320, totalRows * V_STEP + PAD_T + PAD_B);
+    var W = canvas.width, H = canvas.height;
+
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#040410'; ctx.fillRect(0, 0, W, H);
+
+    var rng = 7919;
+    function _rn() { rng = (rng * 1664525 + 1013904223) | 0; return (rng >>> 0) / 4294967296; }
+    for (var si = 0; si < 160; si++) {
+        ctx.beginPath(); ctx.arc(_rn()*W, _rn()*H, 0.65, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(180,200,255,' + (0.1 + _rn()*0.4).toFixed(2) + ')';
+        ctx.fill();
+    }
+
+    function nPx(n) { return PAD_L + n.gx * H_STEP; }
+    function nPy(n) { return PAD_T + n.gy * V_STEP; }
+
+    var placed = [];
+    (function collect(nodes) {
+        nodes.forEach(function(n) { placed.push(n); collect(n.children); });
+    }(roots));
+    _sysBodies = placed;
+
+    // Connector lines (behind bodies)
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(80,100,160,0.45)';
+    placed.forEach(function(node) {
+        if (!node.children.length) return;
+        var px = nPx(node), py = nPy(node);
+        var horiz  = _nodeHoriz(node, node.lvl);
+        var last   = node.children[node.children.length - 1];
+        if (horiz) {
+            ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(nPx(last), py); ctx.stroke();
+        } else {
+            ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, nPy(last)); ctx.stroke();
+        }
+    });
+
+    // Bodies
+    placed.forEach(function(node) {
+        var b = node.b;
+        node.x = nPx(node); node.y = nPy(node);
+        var bx = node.x, by = node.y;
+
+        // Barycentre: red × mark
+        if (b.t === 'Barycentre') {
+            var xs = 5;
+            ctx.strokeStyle = '#cc3333'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(bx-xs, by-xs); ctx.lineTo(bx+xs, by+xs); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(bx+xs, by-xs); ctx.lineTo(bx-xs, by+xs); ctx.stroke();
+            if (b.s) {
+                ctx.font = '8px sans-serif'; ctx.fillStyle = 'rgba(220,120,120,0.9)';
+                ctx.textAlign = 'left'; ctx.fillText(b.s, bx + xs + 2, by + 3);
+            }
+            node.x = bx; node.y = by;
+            return;
+        }
+
+        var br  = _bodyPx(b);
+        var col = b.t === 'Star' ? _starCol(b.s) : _planetCol(b.s, b.e);
+        var isBH = b.t === 'Star' && ((b.s || '').toUpperCase() === 'H' ||
+                   (b.s || '').toLowerCase().indexOf('black') >= 0);
+
+        // Star glow (compact — br*2 to avoid overlap with adjacent rows)
+        if (b.t === 'Star' && !isBH) {
+            var g = ctx.createRadialGradient(bx, by, 0, bx, by, br * 2);
+            g.addColorStop(0, col); g.addColorStop(0.5, col + '55'); g.addColorStop(1, col + '00');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(bx, by, br * 2, 0, Math.PI * 2); ctx.fill();
+        }
+        if (b.b > 0) {
+            ctx.beginPath(); ctx.arc(bx, by, br + 3, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(50,220,100,0.75)'; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+        // Ring back arc — drawn before body so body fill covers the centre portion
+        if (b.ri > 0) {
+            ctx.beginPath();
+            ctx.ellipse(bx, by, br * 2.2, br * 0.52, Math.PI * 0.2, 0, Math.PI);
+            ctx.strokeStyle = 'rgba(210,210,255,0.7)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
+        if (isBH) {
+            ctx.fillStyle = '#050010'; ctx.fill();
+            ctx.beginPath(); ctx.arc(bx, by, br + 2, 0, Math.PI * 2);
+            ctx.strokeStyle = '#cc33ff'; ctx.lineWidth = 1; ctx.stroke();
+        } else {
+            ctx.fillStyle = col; ctx.fill();
+        }
+        if (b.w && b.t !== 'Star') {
+            ctx.beginPath(); ctx.arc(bx, by, br + 1.5, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,200,80,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+        // Ring front arc — drawn after body fill so it appears in front
+        if (b.ri > 0) {
+            ctx.beginPath();
+            ctx.ellipse(bx, by, br * 2.2, br * 0.52, Math.PI * 0.2, Math.PI, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(210,210,255,0.9)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+        if (b.f) {
+            ctx.font = 'bold 6px sans-serif';
+            ctx.fillStyle = '#ffee44';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillText('★', bx, by - br - 3);
+        }
+
+        // Index label: strip system prefix, show at upper-right of icon
+        var lbl = b.n;
+        var lpfx = _sysData.name + ' ';
+        if (lbl.indexOf(lpfx) === 0) lbl = lbl.slice(lpfx.length);
+        if (lbl === _sysData.name) lbl = '';
+        if (lbl) {
+            ctx.font = '8px sans-serif';
+            ctx.fillStyle = b.e ? '#66ffaa' : '#ffee44';
+            ctx.textAlign = 'left';
+            ctx.fillText(lbl, bx + br * 0.55, by - br - 1);
+        }
+    });
+    ctx.textAlign = 'left';
+
+    if (!placed.length) {
+        ctx.fillStyle = '#446'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('No body data available', W / 2, H / 2); ctx.textAlign = 'left';
+    }
+}
+
+// Modal events and tooltip (script is at end of <body>, DOM is ready)
+(function() {
+    var canvas = document.getElementById('sys-canvas');
+    var tip    = document.getElementById('sys-tip');
+    if (!canvas) return;
+
+    canvas.addEventListener('mousemove', function(e) {
+        if (!_sysBodies || !_sysBodies.length) { tip.classList.remove('visible'); return; }
+        var rect = canvas.getBoundingClientRect();
+        var sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+        var mx = (e.clientX - rect.left) * sx, my = (e.clientY - rect.top) * sy;
+        var best = null, bd = 9999;
+        _sysBodies.forEach(function(node) {
+            var br = _bodyPx(node.b);
+            var dx = node.x - mx, dy = node.y - my, d = Math.sqrt(dx*dx + dy*dy);
+            if (d < br + 12 && d < bd) { bd = d; best = node; }
+        });
+        if (best) {
+            var b = best.b;
+            var lines = ['<b>' + (b.n || '?') + '</b>'];
+            if (b.s) lines.push(b.s);
+            if (b.t !== 'Star') {
+                if (b.d) lines.push(b.d.toFixed(1) + ' LS from arrival');
+                if (b.b > 0) lines.push('<span style="color:#44ee88">' + b.b + ' bio signal' + (b.b>1?'s':'') + '</span>');
+                if (b.g > 0) lines.push('<span style="color:#ee8844">' + b.g + ' geo signal' + (b.g>1?'s':'') + '</span>');
+                if (b.ri > 0) lines.push(b.ri + ' ring' + (b.ri>1?'s':''));
+                if (b.l)     lines.push('<span style="color:#66cc88">Landable</span>');
+                if (b.e)     lines.push('<span style="color:#66ffaa">Terraformable</span>');
+                if (b.w)     lines.push('<span style="color:#ffcc44">Mapped</span>');
+                if (b.f)     lines.push('<span style="color:#ffee44">★ First discovery</span>');
+                if (b.r)     lines.push(b.r.toLocaleString() + ' km radius');
+                if (b.k)     lines.push(Math.round(b.k) + ' K');
+                if (b.sp && b.sp.length) {
+                    lines.push('<span style="color:#88ddaa">Species:</span>');
+                    b.sp.forEach(function(s) { lines.push('&nbsp;&middot; ' + s); });
+                }
+            } else {
+                if (b.d && b.d > 1) lines.push(b.d.toFixed(1) + ' LS from arrival');
+                if (b.r) lines.push((b.r / 695700).toFixed(2) + ' R☉');
+                if (b.ri > 0) lines.push(b.ri + ' ring' + (b.ri>1?'s':''));
+                if (b.f) lines.push('<span style="color:#ffee44">★ First discovery</span>');
+            }
+            tip.innerHTML = lines.join('<br>');
+            tip.classList.add('visible');
+            // Use fixed viewport coords — tooltip never causes scrollbar flicker
+            var scale = rect.width / canvas.width;
+            var cx = rect.left + best.x * scale;
+            var cy = rect.top  + best.y * scale;
+            var tw = tip.offsetWidth, th = tip.offsetHeight;
+            var tx = cx + 14;
+            var ty = cy - 10;
+            if (tx + tw + 8 > window.innerWidth)  tx = cx - tw - 14;
+            if (ty + th + 8 > window.innerHeight) ty = cy - th - 10;
+            if (ty < 4) ty = 4;
+            if (tx < 4) tx = 4;
+            tip.style.left = tx + 'px'; tip.style.top = ty + 'px';
+        } else {
+            tip.classList.remove('visible');
+        }
+    });
+    canvas.addEventListener('mouseleave', function() { tip.classList.remove('visible'); });
+
+    var bg    = document.getElementById('sys-modal-bg');
+    var close = document.getElementById('sys-modal-close');
+    if (bg)    bg.addEventListener('click', closeSysModal);
+    if (close) close.addEventListener('click', closeSysModal);
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeSysModal(); });
+    document.addEventListener('click', function(e) {
+        var link = e.target.closest('.sys-link');
+        if (link && link.dataset.sa) openSysModal(link.dataset.sa);
+    });
+}());
 """
 
 
@@ -547,6 +1366,24 @@ _HTML_TEMPLATE = """\
   </style>
 </head>
 <body>
+<div id="sys-modal" class="sys-modal">
+  <div class="sys-modal-bg" id="sys-modal-bg"></div>
+  <div class="sys-modal-box">
+    <div class="sys-modal-hdr">
+      <span id="sys-modal-ttl" class="sys-modal-ttl">–</span>
+      <span id="sys-modal-sc"  class="sys-modal-sc"></span>
+      <button class="sys-modal-close" id="sys-modal-close">✕</button>
+    </div>
+    <div id="sys-canvas-wrap" style="position:relative;overflow-y:auto;max-height:calc(92vh - 160px);overflow-x:auto">
+      <canvas id="sys-canvas" width="700" height="460"></canvas>
+      <div id="sys-tip" class="sys-tip"></div>
+    </div>
+    <div class="sys-modal-ftr">
+      <canvas id="sys-legend-canvas" width="224" height="130"></canvas>
+      <canvas id="gal-canvas" width="280" height="130"></canvas>
+    </div>
+  </div>
+</div>
   <nav id="sidebar">
     <div class="sidebar-logo">
       <div class="sidebar-logo-row">EDDA<span class="version">v{version}</span></div>
@@ -557,6 +1394,7 @@ _HTML_TEMPLATE = """\
   <main>
 {sections}
   </main>
+  <script>__SYS_DATA_PLACEHOLDER__</script>
   <script>
 {js}
   </script>
@@ -651,11 +1489,16 @@ def _records_table_html(df: pd.DataFrame) -> str:
         val_str = f"{val:,.3f}" if val < 1_000_000 else f"{val:,.0f}"
         unit = str(r.get("Unit", "")).strip()
         return f"{val_str} {unit}".strip()
-    rows = [
-        f'<tr><td>{r["Record"]}</td><td>{r["Body / System"]}</td>'
-        f'<td class="val">{_fmt(r)}</td></tr>'
-        for _, r in df.iterrows()
-    ]
+    rows = []
+    for _, r in df.iterrows():
+        sa = r.get("system_address")
+        name = r["Body / System"]
+        ref = (f'<span class="sys-link" data-sa="{int(sa)}">{name}</span>'
+               if sa and str(sa) not in ("", "nan") else name)
+        rows.append(
+            f'<tr><td>{r["Record"]}</td><td>{ref}</td>'
+            f'<td class="val">{_fmt(r)}</td></tr>'
+        )
     hdr = "<tr><th>Record</th><th>Body / System</th><th>Value</th></tr>"
     return '<table class="summary-table">' + hdr + "".join(rows) + "</table>"
 
@@ -703,6 +1546,11 @@ def _vicinity_hints_html(helium_boxels: pd.DataFrame,
                          high_value_boxels: pd.DataFrame) -> str:
     entries: list[tuple[float, str]] = []
 
+    def _sys_ref(name: str, sa) -> str:
+        if sa and str(sa) not in ("", "nan"):
+            return f'<span class="sys-link" data-sa="{int(sa)}">{name}</span>'
+        return name
+
     for _, r in helium_boxels.iterrows():
         he_range = (f"{r['he_min']:.1f}–{r['he_max']:.1f}%"
                     if abs(r["he_max"] - r["he_min"]) > 0.1
@@ -711,7 +1559,7 @@ def _vicinity_hints_html(helium_boxels: pd.DataFrame,
             '<li><div class="hint-card">'
             '<div class="hint-body">'
             '<span class="hint-type">Potential helium-rich boxel</span>'
-            f'<div class="hint-coords">{r["nearest_system"]}</div>'
+            f'<div class="hint-coords">{_sys_ref(r["nearest_system"], r.get("nearest_system_address"))}</div>'
             f'<div class="hint-detail">Boxel: {r["boxel"]} &nbsp;·&nbsp; '
             f'He%: {he_range} &nbsp;·&nbsp; '
             f'{int(r["gg_count"])} gas giants scanned</div>'
@@ -725,7 +1573,7 @@ def _vicinity_hints_html(helium_boxels: pd.DataFrame,
             '<li><div class="hint-card tectonicas">'
             '<div class="hint-body">'
             '<span class="hint-type">Potential Stratum Tectonicas boxel</span>'
-            f'<div class="hint-coords">{r["nearest_system"]}</div>'
+            f'<div class="hint-coords">{_sys_ref(r["nearest_system"], r.get("nearest_system_address"))}</div>'
             f'<div class="hint-detail">Boxel: {r["boxel"]} &nbsp;·&nbsp; '
             f'He%: {r["he_mean"]:.1f}% &nbsp;·&nbsp; '
             f'{int(r["gg_count"])} gas giants scanned</div>'
@@ -739,7 +1587,7 @@ def _vicinity_hints_html(helium_boxels: pd.DataFrame,
             '<li><div class="hint-card highvalue">'
             '<div class="hint-body">'
             '<span class="hint-type">Potential high exploration value boxel (&gt;3.5 MCr avg)</span>'
-            f'<div class="hint-coords">{r["nearest_system"]}</div>'
+            f'<div class="hint-coords">{_sys_ref(r["nearest_system"], r.get("nearest_system_address"))}</div>'
             f'<div class="hint-detail">Boxel: {r["boxel"]} &nbsp;·&nbsp; '
             f'He%: {r["he_mean"]:.1f}% &nbsp;·&nbsp; '
             f'{int(r["gg_count"])} gas giants scanned</div>'
@@ -1084,8 +1932,13 @@ def _species_panel_html(species: str, grp: pd.DataFrame,
         pc  = r.get("planet_class") or "—"
         fl  = '<span class="check">✓</span>' if r.get("is_first_log") else ""
         ep  = _fmt_cr(r.get("estimated_payout", 0))
+        sa  = r.get("system_address", "")
+        sys_html = (f'<span class="sys-link" data-sa="{sa}">{sys}</span>'
+                    if sa and sys != "—" else sys)
+        bod_html = (f'<span class="sys-link" data-sa="{sa}">{bod}</span>'
+                    if sa and bod != "—" else bod)
         rows.append(
-            f"<tr><td>{ts}</td><td>{sys}</td><td>{bod}</td>"
+            f"<tr><td>{ts}</td><td>{sys_html}</td><td>{bod_html}</td>"
             f"<td>{pc}</td>"
             f'<td style="text-align:center">{fl}</td>'
             f'<td class="num">{ep}</td></tr>'
@@ -1295,28 +2148,33 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None,
         ]:
             if col not in grp.columns:
                 continue
-            valid = grp[[col, "name"]].dropna(subset=[col])
+            valid = grp[[col, "name", "system_address"]].dropna(subset=[col])
             valid = valid[valid[col] > 0]
             if len(valid) < 2:
                 continue
             idx_min = valid[col].idxmin()
             idx_max = valid[col].idxmax()
+            min_name = valid.loc[idx_min, "name"]
+            min_sa   = int(valid.loc[idx_min, "system_address"])
+            max_name = valid.loc[idx_max, "name"]
+            max_sa   = int(valid.loc[idx_max, "system_address"])
             prop_rows.append(
                 f"<tr><td>{lbl}</td>"
-                f'<td class="hint-col-min">{valid.loc[idx_min, "name"]}</td>'
+                f'<td class="hint-col-min"><span class="sys-link" data-sa="{min_sa}">{min_name}</span></td>'
                 f'<td class="num num-center">{fmt.format(valid.loc[idx_min, col])}</td>'
                 f'<td class="num num-center">{fmt.format(valid[col].mean())}</td>'
                 f'<td class="num num-center">{fmt.format(valid.loc[idx_max, col])}</td>'
-                f'<td class="hint-col">{valid.loc[idx_max, "name"]}</td></tr>'
+                f'<td class="hint-col"><span class="sys-link" data-sa="{max_sa}">{max_name}</span></td></tr>'
             )
 
         sys_counts = grp.groupby("system_name").size()
         top_sys = sys_counts.idxmax()
+        top_sa = int(grp.loc[grp["system_name"] == top_sys, "system_address"].iloc[0])
         prop_rows.append(
             f"<tr><td>Most in system</td>"
             f'<td class="hint-col-min"></td><td class="num num-center"></td><td class="num num-center"></td>'
             f'<td class="num">{int(sys_counts.max())}</td>'
-            f'<td class="hint-col">{top_sys}</td></tr>'
+            f'<td class="hint-col"><span class="sys-link" data-sa="{top_sa}">{top_sys}</span></td></tr>'
         )
 
         _vw = "width:90px;text-align:center"
@@ -1337,13 +2195,18 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None,
         for _, r in top.iterrows():
             fd = '<span class="check">✓</span>' if r.get("first_discovered") else ""
             fm = '<span class="check">✓</span>' if r.get("first_mapped") else ""
-            tf = r.get("terraform_state") or ""
-            tf_note = " ✦" if tf and tf.lower() not in ("", "not terraformable") else ""
-            d = _dist_ly(cur_pos, r.get("x"), r.get("y"), r.get("z"))
+            d  = _dist_ly(cur_pos, r.get("x"), r.get("y"), r.get("z"))
+            sa = int(r["system_address"]) if r.get("system_address") else None
+            body_name = r.get("name", "")
+            sys_name  = r.get("system_name", "")
+            body_cell = (f'<span class="sys-link" data-sa="{sa}">{body_name}</span>'
+                         if sa else body_name)
+            sys_cell  = (f'<span class="sys-link" data-sa="{sa}">{sys_name}</span>'
+                         if sa and sys_name else sys_name)
             top_rows.append(
                 f"<tr>"
-                f"<td>{r.get('name', '')}{tf_note}</td>"
-                f"<td>{r.get('system_name', '')}</td>"
+                f"<td>{body_cell}</td>"
+                f"<td>{sys_cell}</td>"
                 f'<td class="num" data-sort="{1 if r.get("first_discovered") else 0}" style="text-align:center">{fd}</td>'
                 f'<td class="num" data-sort="{1 if r.get("first_mapped") else 0}" style="text-align:center">{fm}</td>'
                 f'<td class="num" data-sort="{float(r.get("estimated_value", 0)):.0f}">{_fmt_cr(r.get("estimated_value", 0))}</td>'
@@ -1483,27 +2346,32 @@ def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
             ]:
                 if col not in sbg.columns:
                     continue
-                valid = sbg[[col, "name"]].dropna(subset=[col])
+                valid = sbg[[col, "name", "system_address"]].dropna(subset=[col])
                 valid = valid[valid[col] > 0]
                 if len(valid) < 2:
                     continue
                 idx_min = valid[col].idxmin()
                 idx_max = valid[col].idxmax()
+                min_name = valid.loc[idx_min, "name"]
+                min_sa   = int(valid.loc[idx_min, "system_address"])
+                max_name = valid.loc[idx_max, "name"]
+                max_sa   = int(valid.loc[idx_max, "system_address"])
                 star_prop_rows.append(
                     f"<tr><td>{lbl}</td>"
-                    f'<td class="hint-col-min">{valid.loc[idx_min, "name"]}</td>'
+                    f'<td class="hint-col-min"><span class="sys-link" data-sa="{min_sa}">{min_name}</span></td>'
                     f'<td class="num num-center">{fmt.format(valid.loc[idx_min, col])}</td>'
                     f'<td class="num num-center">{fmt.format(valid[col].mean())}</td>'
                     f'<td class="num num-center">{fmt.format(valid.loc[idx_max, col])}</td>'
-                    f'<td class="hint-col">{valid.loc[idx_max, "name"]}</td></tr>'
+                    f'<td class="hint-col"><span class="sys-link" data-sa="{max_sa}">{max_name}</span></td></tr>'
                 )
             sys_counts = sbg.groupby("system_name").size()
             top_sys = sys_counts.idxmax()
+            top_sa = int(sbg.loc[sbg["system_name"] == top_sys, "system_address"].iloc[0])
             star_prop_rows.append(
                 f"<tr><td>Most in system</td>"
                 f'<td class="hint-col-min"></td><td class="num num-center"></td><td class="num num-center"></td>'
                 f'<td class="num">{int(sys_counts.max())}</td>'
-                f'<td class="hint-col">{top_sys}</td></tr>'
+                f'<td class="hint-col"><span class="sys-link" data-sa="{top_sa}">{top_sys}</span></td></tr>'
             )
             _vw = "width:90px;text-align:center"
             star_prop_block = (
@@ -1831,6 +2699,12 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
             bt_charts[bt] = b64
 
     # ------------------------------------------------------------------
+    # System diagram data (embedded JSON for canvas renderer)
+    # ------------------------------------------------------------------
+    print("  System diagram data...")
+    diagram_data = st.system_diagram_data(conn)
+
+    # ------------------------------------------------------------------
     # Species Catalogue
     # ------------------------------------------------------------------
     print("  Species catalogue...")
@@ -1893,6 +2767,9 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         js=_JS,
         version=_version,
     )
+
+    sys_data_js = "var SYSTEM_DATA = " + json.dumps(diagram_data, separators=(",", ":")) + ";"
+    html = html.replace("__SYS_DATA_PLACEHOLDER__", sys_data_js)
 
     out_path.write_text(html, encoding="utf-8")
     size_mb = out_path.stat().st_size / 1_048_576

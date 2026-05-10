@@ -107,10 +107,11 @@ def personal_records(conn: sqlite3.Connection) -> pd.DataFrame:
         row = conn.execute(sql).fetchone()
         if row:
             rows.append({
-                "Record":        label,
-                "Body / System": row[0],
-                "Value":         round(float(row[2]), 3),
-                "Unit":          unit,
+                "Record":           label,
+                "Body / System":    row[0],
+                "system_address":   row[1],
+                "Value":            round(float(row[2]), 3),
+                "Unit":             unit,
             })
     return pd.DataFrame(rows)
 
@@ -573,6 +574,7 @@ def organic_values_table(conn: sqlite3.Connection,
 
         rows.append({
             "timestamp":         r["timestamp"],
+            "system_address":    r["system_address"],
             "system_name":       r["system_name"],
             "body_name":         r["body_name"],
             "planet_class":      r["planet_class"],
@@ -669,6 +671,90 @@ def planet_counts_by_spectral_class(conn: sqlite3.Connection) -> pd.Series:
     return df.set_index("spectral_class")["total"]
 
 
+def system_diagram_data(conn: sqlite3.Connection) -> dict:
+    """
+    Body data for every system that has at least one scanned star or planet,
+    keyed by system_address (string).  Embedded in the dashboard as a JSON blob
+    for client-side orrery rendering; covers all tables, not just organic-scan systems.
+    """
+    sys_sql = """
+        SELECT DISTINCT s.system_address, s.name, s.star_class, s.x, s.z
+        FROM bodies b
+        JOIN systems s ON s.system_address = b.system_address
+        WHERE b.body_type IN ('Star', 'Planet')
+        ORDER BY s.name
+    """
+    systems = conn.execute(sys_sql).fetchall()
+    if not systems:
+        return {}
+
+    result = {str(r[0]): {"name": r[1], "sc": r[2] or "",
+                           "x": r[3], "z": r[4], "bodies": []}
+              for r in systems}
+
+    bodies_sql = """
+        SELECT b.system_address, b.body_id, b.name, b.body_type, b.subtype,
+               b.distance_ls, b.bio_signals, b.geo_signals,
+               b.was_mapped, b.first_discovered, b.radius_km,
+               b.surface_temp_k, b.is_landable, b.terraform_state,
+               b.orbital_parent_id, b.parent_star_id,
+               (SELECT COUNT(*) FROM rings r
+                WHERE r.system_address = b.system_address AND r.body_id = b.body_id
+                  AND r.name NOT LIKE '% Belt') AS ring_count
+        FROM bodies b
+        WHERE b.system_address IN (
+            SELECT DISTINCT system_address FROM bodies WHERE body_type IN ('Star', 'Planet')
+        )
+        ORDER BY b.system_address, COALESCE(b.distance_ls, 99999)
+    """
+    for r in conn.execute(bodies_sql).fetchall():
+        sa_str = str(r[0])
+        if sa_str not in result:
+            continue
+        tf = (r[13] or "").strip().lower()
+        result[sa_str]["bodies"].append({
+            "i": r[1],
+            "n": r[2],
+            "t": r[3],
+            "s": r[4] or "",
+            "d": round(r[5], 2) if r[5] is not None else None,
+            "b": r[6] or 0,
+            "g": r[7] or 0,
+            "w": r[8] or 0,
+            "f": r[9] or 0,
+            "r": round(r[10]) if r[10] else None,
+            "k": round(r[11]) if r[11] else None,
+            "l": r[12] or 0,
+            "e": 1 if tf and tf not in ("", "not terraformable") else 0,
+            "p": r[14],
+            "q": r[15],
+            "ri": r[16] or 0,
+        })
+
+    # Bio species (completed scans only) — one-to-many, built separately
+    species_sql = """
+        SELECT system_address, body_id, species_localised
+        FROM organic_scans
+        WHERE scan_state = 'Analyse' AND species_localised IS NOT NULL
+        ORDER BY system_address, body_id, species_localised
+    """
+    species_map: dict[tuple, list] = {}
+    for r in conn.execute(species_sql).fetchall():
+        key = (str(r[0]), r[1])
+        if key not in species_map:
+            species_map[key] = []
+        if r[2] not in species_map[key]:
+            species_map[key].append(r[2])
+
+    for sa_str, sys_dict in result.items():
+        for body in sys_dict["bodies"]:
+            sp = species_map.get((sa_str, body["i"]))
+            if sp:
+                body["sp"] = sp
+
+    return result
+
+
 def species_system_locations(conn: sqlite3.Connection,
                              species: str) -> pd.DataFrame:
     """
@@ -715,7 +801,7 @@ def star_body_details(conn: sqlite3.Connection) -> pd.DataFrame:
         SELECT b.name, b.subtype AS star_class,
                b.mass_em, b.age_my, b.radius_km, b.surface_temp_k,
                b.first_discovered,
-               s.name AS system_name, s.x, s.y, s.z
+               s.system_address, s.name AS system_name, s.x, s.y, s.z
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
         WHERE b.body_type = 'Star'
@@ -935,7 +1021,7 @@ def nearby_helium_boxels(
     if cur_pos is None:
         return pd.DataFrame()
     sql = """
-        SELECT s.name AS system_name, s.x, s.y, s.z,
+        SELECT s.system_address, s.name AS system_name, s.x, s.y, s.z,
                b.atmosphere_he_pct,
                b.subtype
         FROM bodies b
@@ -968,10 +1054,9 @@ def nearby_helium_boxels(
         (df["z"] - cz) ** 2
     ).pow(0.5)
 
-    nearest = (
-        df.loc[df.groupby("boxel")["dist"].idxmin(), ["boxel", "system_name"]]
-        .set_index("boxel")["system_name"]
-    )
+    nearest_idx = df.groupby("boxel")["dist"].idxmin()
+    nearest = df.loc[nearest_idx, ["boxel", "system_name"]].set_index("boxel")["system_name"]
+    nearest_sa = df.loc[nearest_idx, ["boxel", "system_address"]].set_index("boxel")["system_address"]
     grp = (
         df.groupby("boxel")
         .agg(
@@ -984,6 +1069,7 @@ def nearby_helium_boxels(
         .reset_index()
     )
     grp["nearest_system"] = grp["boxel"].map(nearest)
+    grp["nearest_system_address"] = grp["boxel"].map(nearest_sa)
     return (
         grp[
             (grp["gg_count"] >= min_ggs) &
@@ -1011,7 +1097,7 @@ def nearby_tectonicas_boxels(
     if cur_pos is None:
         return pd.DataFrame()
     sql = """
-        SELECT s.name AS system_name, s.x, s.y, s.z,
+        SELECT s.system_address, s.name AS system_name, s.x, s.y, s.z,
                b.atmosphere_he_pct, b.subtype
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
@@ -1038,10 +1124,9 @@ def nearby_tectonicas_boxels(
         (df["x"] - cx) ** 2 + (df["y"] - cy) ** 2 + (df["z"] - cz) ** 2
     ).pow(0.5)
 
-    nearest = (
-        df.loc[df.groupby("boxel")["dist"].idxmin(), ["boxel", "system_name"]]
-        .set_index("boxel")["system_name"]
-    )
+    nearest_idx = df.groupby("boxel")["dist"].idxmin()
+    nearest = df.loc[nearest_idx, ["boxel", "system_name"]].set_index("boxel")["system_name"]
+    nearest_sa = df.loc[nearest_idx, ["boxel", "system_address"]].set_index("boxel")["system_address"]
     grp = (
         df.groupby("boxel")
         .agg(
@@ -1052,6 +1137,7 @@ def nearby_tectonicas_boxels(
         .reset_index()
     )
     grp["nearest_system"] = grp["boxel"].map(nearest)
+    grp["nearest_system_address"] = grp["boxel"].map(nearest_sa)
 
     in_range = grp["he_mean"].apply(
         lambda he: any(lo <= he <= hi for lo, hi in _TECTONICAS_HE_RANGES)
@@ -1079,7 +1165,7 @@ def nearby_high_value_boxels(
     if cur_pos is None:
         return pd.DataFrame()
     sql = """
-        SELECT s.name AS system_name, s.x, s.y, s.z,
+        SELECT s.system_address, s.name AS system_name, s.x, s.y, s.z,
                b.atmosphere_he_pct, b.subtype
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
@@ -1106,10 +1192,9 @@ def nearby_high_value_boxels(
         (df["x"] - cx) ** 2 + (df["y"] - cy) ** 2 + (df["z"] - cz) ** 2
     ).pow(0.5)
 
-    nearest = (
-        df.loc[df.groupby("boxel")["dist"].idxmin(), ["boxel", "system_name"]]
-        .set_index("boxel")["system_name"]
-    )
+    nearest_idx = df.groupby("boxel")["dist"].idxmin()
+    nearest = df.loc[nearest_idx, ["boxel", "system_name"]].set_index("boxel")["system_name"]
+    nearest_sa = df.loc[nearest_idx, ["boxel", "system_address"]].set_index("boxel")["system_address"]
     grp = (
         df.groupby("boxel")
         .agg(
@@ -1120,6 +1205,7 @@ def nearby_high_value_boxels(
         .reset_index()
     )
     grp["nearest_system"] = grp["boxel"].map(nearest)
+    grp["nearest_system_address"] = grp["boxel"].map(nearest_sa)
 
     in_range = grp["he_mean"].apply(
         lambda he: any(lo <= he <= hi for lo, hi in _HIGH_VALUE_HE_RANGES)

@@ -42,6 +42,7 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
         "ALTER TABLE bodies ADD COLUMN composition_metal REAL",
         "ALTER TABLE bodies ADD COLUMN reserve_level TEXT",
         "ALTER TABLE bodies ADD COLUMN parent_star_id INTEGER",
+        "ALTER TABLE bodies ADD COLUMN orbital_parent_id INTEGER",
         "ALTER TABLE systems ADD COLUMN total_bodies INTEGER",
         "ALTER TABLE systems ADD COLUMN fss_complete INTEGER DEFAULT 0",
     ):

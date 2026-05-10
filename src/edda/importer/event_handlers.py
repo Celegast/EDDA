@@ -143,6 +143,14 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             parent_star_id = parent["Star"]
             break
 
+    orbital_parent_id = None
+    parents = event.get("Parents") or []
+    if parents:
+        for key, val in parents[0].items():
+            if key != "Null":
+                orbital_parent_id = val
+                break
+
     row: dict[str, Any] = {
         "system_address":     sa,
         "body_id":            body_id,
@@ -185,6 +193,7 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
         "composition_metal":  comp.get("Metal"),
         "reserve_level":      event.get("ReserveLevel"),
         "parent_star_id":     parent_star_id,
+        "orbital_parent_id":  orbital_parent_id,
     }
 
     conn.execute("""
@@ -200,7 +209,7 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             orbital_inclination, periapsis, ascending_node, mean_anomaly,
             rotation_period, axial_tilt,
             composition_ice, composition_rock, composition_metal,
-            reserve_level, parent_star_id
+            reserve_level, parent_star_id, orbital_parent_id
         ) VALUES (
             :system_address, :body_id, :name, :body_type, :subtype, :subclass,
             :distance_ls, :radius_km, :mass_em, :age_my, :surface_gravity_g,
@@ -213,7 +222,7 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             :orbital_inclination, :periapsis, :ascending_node, :mean_anomaly,
             :rotation_period, :axial_tilt,
             :composition_ice, :composition_rock, :composition_metal,
-            :reserve_level, :parent_star_id
+            :reserve_level, :parent_star_id, :orbital_parent_id
         )
         ON CONFLICT(system_address, body_id) DO UPDATE SET
             subtype             = COALESCE(excluded.subtype,             bodies.subtype),
@@ -249,7 +258,8 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             composition_rock    = COALESCE(excluded.composition_rock,    bodies.composition_rock),
             composition_metal   = COALESCE(excluded.composition_metal,   bodies.composition_metal),
             reserve_level       = COALESCE(excluded.reserve_level,       bodies.reserve_level),
-            parent_star_id      = COALESCE(excluded.parent_star_id,      bodies.parent_star_id)
+            parent_star_id      = COALESCE(excluded.parent_star_id,      bodies.parent_star_id),
+            orbital_parent_id   = COALESCE(excluded.orbital_parent_id,   bodies.orbital_parent_id)
     """, row)
 
     for mat in event.get("Materials", []):
