@@ -116,13 +116,39 @@ def plot_body_types_interactive(df: pd.DataFrame,
 # Star class bar
 # ---------------------------------------------------------------------------
 
+_STAR_CLASS_COLORS: dict[str, str] = {
+    "O":  "#6699ff", "B":  "#aaccff", "A":  "#ddeeff",
+    "F":  "#ffffcc", "G":  "#ffee88", "K":  "#ffaa44",
+    "M":  "#ff6633", "L":  "#cc3311", "T":  "#992211",
+    "Y":  "#661100", "TTS": "#ff8855", "AeBe": "#bbddff",
+    "W":  "#66ffee", "WN": "#44ffdd", "WC": "#33eebb", "WO": "#22ddaa",
+    "C":  "#ff9966", "S":  "#ffbb66", "MS": "#ffcc88",
+    "D":  "#aaaacc", "DA": "#aaaacc", "DB": "#9999bb", "DC": "#8888aa",
+    "N":  "#ccccff", "H":  "#888888",
+}
+_STAR_CLASS_DEFAULT = "#8899aa"
+
+
+def _star_class_color(cls: str) -> str:
+    if cls in _STAR_CLASS_COLORS:
+        return _STAR_CLASS_COLORS[cls]
+    for prefix in ("WN", "WC", "WO", "DA", "DB", "DC", "TTS", "AeBe", "MS"):
+        if cls.startswith(prefix):
+            return _STAR_CLASS_COLORS[prefix]
+    for letter in ("O", "B", "A", "F", "G", "K", "M", "L", "T", "Y", "C", "S", "W", "D", "N", "H"):
+        if cls.startswith(letter):
+            return _STAR_CLASS_COLORS[letter]
+    return _STAR_CLASS_DEFAULT
+
+
 def plot_star_classes_static(df: pd.DataFrame,
                              out_path: Path | None = None) -> str | None:
     if df.empty:
         return None
     fig, ax = plt.subplots(figsize=(10, 5))
-    colors = sns.color_palette("magma", len(df))
-    ax.bar(df["star_class"], df["count"], color=colors)
+    colors = [_star_class_color(c) for c in df["star_class"]]
+    labels = [_BASE_SHORT.get(c, c) for c in df["star_class"]]
+    ax.bar(labels, df["count"], color=colors)
     ax.set_xlabel("Spectral class")
     ax.set_ylabel("Systems")
     ax.set_title("Primary Star Classes Visited")
