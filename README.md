@@ -28,6 +28,10 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 ![He% vs Tectonicas](docs/screenshots/metallicity-vs-tectonicas.png)
 
+**Notable Stellar Phenomena**
+
+![Notable Stellar Phenomena section with 3D map, FSS detections table, and per-type catalogues](docs/screenshots/notable-stellar-phenomena.png)
+
 
 ## Features
 
@@ -50,6 +54,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
   - *Potential helium-rich boxel* — mean He% above 28.5% with ≥3 gas giants
   - *Potential Stratum Tectonicas boxel* — He% in community-identified sweet spots (24.2–24.5% or 25.9–26.5%)
   - *Potential high exploration value boxel* — He% in ranges correlated with >3.5 MCr average system value (24.7–25.4%, 26.2–26.4%, 30.05–30.15%)
+- **Notable Stellar Phenomena** — codex entries for all NSP types (anomalies, Lagrange-cloud organisms, crystals, molluscs, plants, seed pods, and mineral formations) classified into categories and subcategories; interactive 3D galaxy map with colour-coded markers per subcategory (same hue family per category, lightness varies by subcategory); FSS Detections table listing every system where an NSP signal was found with catalogued NSP types shown as coloured tags; per-type subcategory drill-down panels with new-codex-entry tracking (the game flags `IsNewEntry` when a type is logged for the first time in a given galactic region by this commander) and decoded galactic region names; overview counts (systems detected, codex entries, new codex entries, unique systems, categories found)
 - **Income charts** — exploration and exobiology credits earned over time (cumulative)
 - **Dashboard** — all of the above assembled into a single self-contained HTML file with a tabbed navigation sidebar, showing the current package version
 
@@ -284,6 +289,7 @@ The dashboard sections:
 | Species Catalogue | Per-genus overview panels with per-species drill-down; scan counts, first-log tracking, estimated and actual sale values; planet-type breakdown; spectral distribution chart per species and per genus |
 | Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure) with min/avg/max and body names (clickable); most bodies of that type in one system (clickable); sortable detail table with distance to commander; spectral distribution chart per body type |
 | Star-class Catalogue | Stars grouped by type; per-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
+| Notable Stellar Phenomena | Overview counts; interactive 3D galaxy map with colour-coded markers (category hue, subcategory lightness); FSS Detections table with catalogued NSP types as coloured tags; per-category and per-subcategory drill-down panels with new-codex-entry tracking and decoded galactic region names |
 
 ## System Map
 

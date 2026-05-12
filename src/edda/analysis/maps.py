@@ -12,6 +12,7 @@ interactive functions return a go.Figure — used by the dashboard builder.
 """
 
 import base64
+import colorsys
 import io
 from pathlib import Path
 
@@ -731,6 +732,118 @@ def plot_sector_valuable_map_interactive(
         width=1400, height=900,
         legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
                     bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
+    )
+
+    if out_path is None:
+        return fig
+    _write_interactive(fig, out_path)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# NSP 3D scatter map
+# ---------------------------------------------------------------------------
+
+# Hue (degrees) for each NSP category; subcategory shades vary lightness.
+_NSP_CATEGORY_HUES: dict[str, tuple[int, float]] = {
+    # (hue_degrees, saturation)
+    "Anomalies":          (35,  0.90),
+    "Lagrange Clouds":    (195, 0.90),
+    "Mineral Formations": (215, 0.45),
+    "Molluscs":           (230, 0.75),
+    "Plants":             (130, 0.65),
+    "Seed Pods":          (285, 0.70),
+    "Other":              (0,   0.50),
+}
+
+
+def _nsp_color(category: str, subcat_idx: int, subcat_total: int) -> str:
+    """Hex colour for a subcategory: same hue as category, lightness varies."""
+    hue_deg, sat = _NSP_CATEGORY_HUES.get(category, (0, 0.50))
+    lightness = 0.42 + 0.28 * (subcat_idx / max(subcat_total - 1, 1))
+    r, g, b = colorsys.hls_to_rgb(hue_deg / 360.0, lightness, sat)
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def plot_nsp_map_3d(df_codex: pd.DataFrame,
+                    out_path: Path | None = None,
+                    current_pos: dict | None = None) -> go.Figure | None:
+    """
+    3D galaxy map of NSP codex discoveries.
+    Expects df_codex to carry 'nsp_cat' and 'nsp_subcat' columns
+    (added by dashboard._build_nsp_section before calling here).
+    """
+    if df_codex.empty:
+        return None
+    if "nsp_cat" not in df_codex.columns or "nsp_subcat" not in df_codex.columns:
+        return None
+
+    df = (df_codex
+          .drop_duplicates(subset=["system_address", "nsp_subcat"])
+          .sort_values(["nsp_cat", "nsp_subcat"])
+          .copy())
+
+    # Pre-compute per-category subcategory ordering for shade assignment
+    cat_subcat_order: dict[str, list[str]] = {
+        cat: sorted(grp["nsp_subcat"].unique())
+        for cat, grp in df.groupby("nsp_cat")
+    }
+
+    traces = []
+    seen_cats: set[str] = set()
+    for (cat, subcat), grp in df.groupby(["nsp_cat", "nsp_subcat"]):
+        subcats = cat_subcat_order.get(cat, [subcat])
+        idx = subcats.index(subcat) if subcat in subcats else 0
+        color = _nsp_color(cat, idx, len(subcats))
+
+        sys_names = (grp["system_name"].tolist()
+                     if "system_name" in grp.columns else [""] * len(grp))
+        show_title = cat not in seen_cats
+        seen_cats.add(cat)
+        traces.append(go.Scatter3d(
+            x=grp["x"].tolist(), y=grp["y"].tolist(), z=grp["z"].tolist(),
+            mode="markers",
+            marker=dict(size=7, color=color, opacity=0.85, line=dict(width=0)),
+            text=sys_names,
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                f"{subcat}<br>"
+                "(%{x:.1f}, %{y:.1f}, %{z:.1f}) ly"
+                "<extra></extra>"
+            ),
+            name=subcat,
+            legendgroup=cat,
+            legendgrouptitle=dict(text=cat, font=dict(color="white", size=11))
+                if show_title else None,
+        ))
+
+    extra = [_current_pos_trace_3d(current_pos)] if current_pos else []
+    n_sys = df["system_address"].nunique()
+    fig = go.Figure(data=traces + [_landmark_trace_3d()] + extra)
+    fig.update_layout(
+        title=dict(
+            text=f"Notable Stellar Phenomena — Galaxy Map ({n_sys:,} systems)",
+            font=dict(color="white"),
+        ),
+        scene=dict(
+            xaxis=dict(title="X (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[50000, -50000]),
+            yaxis=dict(title="Y (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-16000, 9000]),
+            zaxis=dict(title="Z (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-24000, 76000]),
+            bgcolor="#0a0a1a",
+            aspectmode="manual",
+            aspectratio=dict(x=1, y=0.25, z=1),
+            camera=dict(eye=dict(x=0.0, y=1.2, z=-1.8), up=dict(x=0, y=1, z=0)),
+        ),
+        paper_bgcolor="#0a0a1a",
+        font_color="white",
+        width=1400, height=900,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466",
+                    borderwidth=1),
     )
 
     if out_path is None:

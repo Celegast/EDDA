@@ -1627,3 +1627,73 @@ def trip_systems_visited(conn: sqlite3.Connection,
         ORDER BY j.timestamp
     """
     return pd.read_sql_query(sql, conn, params=(lo, hi, lo, hi))
+
+
+# ---------------------------------------------------------------------------
+# Notable Stellar Phenomena
+# ---------------------------------------------------------------------------
+
+def nsp_detections(conn: sqlite3.Connection,
+                   cur_pos: dict | None = None) -> pd.DataFrame:
+    """
+    Systems where a Notable Stellar Phenomena signal was detected via FSS.
+    Lagrange-cloud NSPs use '$Fixed_Event_Life_Cloud;',
+    ring-based NSPs use '$Fixed_Event_Life_Ring;'.
+    """
+    sql = """
+        SELECT s.system_address, s.name AS system_name,
+               s.star_class, s.x, s.y, s.z,
+               MIN(f.timestamp) AS detected_at
+        FROM fss_signals f
+        JOIN systems s ON s.system_address = f.system_address
+        WHERE f.signal_name IN (
+            '$Fixed_Event_Life_Cloud;',
+            '$Fixed_Event_Life_Ring;'
+        )
+        GROUP BY s.system_address
+        ORDER BY MIN(f.timestamp) DESC
+    """
+    df = pd.read_sql_query(sql, conn)
+    if not df.empty and cur_pos:
+        df["dist"] = (
+            (df["x"] - cur_pos["x"]) ** 2 +
+            (df["y"] - cur_pos["y"]) ** 2 +
+            (df["z"] - cur_pos["z"]) ** 2
+        ).pow(0.5)
+    return df
+
+
+def nsp_codex_entries(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    Codex entries for NSP entities: anomalies, Lagrange-cloud organisms,
+    and space-biology structures.
+    Filters by known NSP codex name prefixes and sub-categories.
+    """
+    sql = """
+        SELECT COALESCE(ce.name_localised, ce.name)  AS display_name,
+               ce.name                              AS codex_name,
+               ce.sub_category,
+               ce.region,
+               ce.is_new_entry,
+               ce.timestamp,
+               s.system_address, s.name AS system_name, s.x, s.y, s.z
+        FROM codex_entries ce
+        JOIN systems s ON s.system_address = ce.system_address
+        WHERE (
+            ce.name LIKE '$Codex_Ent_L_Phn_Part_%'
+            OR ce.name LIKE '$Codex_Ent_Gas_Clds_%'
+            OR ce.name LIKE '$Codex_Ent_L_Cry_%'
+            OR ce.name LIKE '$Codex_Ent_L_Org_Moll03_%'
+            OR ce.name LIKE '$Codex_Ent_L_Org_PltFun_%'
+            OR ce.name LIKE '$Codex_Ent_L_Seed_%'
+            OR ce.name LIKE '$Codex_Ent_Small_Org_Moll01_%'
+            OR ce.name LIKE '$Codex_Ent_SPOI_Ball_%'
+            OR ce.name LIKE '$Codex_Ent_SPOI_Root_Seeds_%'
+            OR ce.name LIKE '$Codex_Ent_SPOI_SeedPolyp01_%'
+            OR ce.name LIKE '$Codex_Ent_SPOI_SeedWeed01_%'
+            OR ce.name LIKE '$Codex_Ent_S_Seed_%'
+
+        )
+        ORDER BY ce.timestamp DESC
+    """
+    return pd.read_sql_query(sql, conn)

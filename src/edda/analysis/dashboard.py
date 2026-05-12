@@ -13,6 +13,7 @@ binary-encoded customdata and hover templates resolve correctly offline.
 import base64
 import json
 import math
+import re
 import sqlite3
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -359,6 +360,7 @@ section h2 {
     border-bottom: 1px solid #131328;
     vertical-align: top;
 }
+.detail-table td.nowrap { white-space: nowrap; }
 .detail-table tr:hover td { background: #0f0f28; }
 .detail-table .num {
     text-align: right;
@@ -366,6 +368,12 @@ section h2 {
     color: #88ddff;
 }
 .check { color: #44cc88; }
+.bio-tag {
+    display: inline-block; background: #1a3a2a; color: #88ddaa;
+    border: 1px solid #2a5a3a; border-radius: 3px;
+    padding: 1px 5px; margin: 1px 2px; font-size: 0.78em; white-space: nowrap;
+}
+.dim { color: #556; }
 
 .sub-head { color: #aabbdd; font-size: 0.95em; margin: 18px 0 8px; }
 .body-hint { display: block; font-size: 0.75em; color: #ffffff; font-weight: normal; margin-top: 2px; }
@@ -502,9 +510,45 @@ _JS = """
         });
     });
 
+    // ---- Plotly legend group-title toggle ----
+    // After any plot renders, find text elements whose content matches a
+    // legendgroup name and make them clickable to toggle all traces in that group.
+    function _patchLegendGroupTitles(gd) {
+        if (!window.Plotly || !gd.data) return;
+        var groups = {};
+        gd.data.forEach(function (trace, i) {
+            if (trace.legendgroup)
+                (groups[trace.legendgroup] = groups[trace.legendgroup] || []).push(i);
+        });
+        gd.querySelectorAll('g.legend text').forEach(function (el) {
+            var name = el.textContent.trim();
+            if (!groups[name]) return;
+            var idxs = groups[name].slice();
+            el.style.cursor = 'pointer';
+            var clone = el.cloneNode(true);
+            clone.style.cursor = 'pointer';
+            clone.style.textDecoration = 'underline';
+            el.parentNode.replaceChild(clone, el);
+            clone.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var anyVisible = idxs.some(function (i) {
+                    var v = gd.data[i].visible;
+                    return v === true || v === undefined || v === null;
+                });
+                Plotly.restyle(gd, { visible: anyVisible ? 'legendonly' : true }, idxs);
+            });
+        });
+    }
+
     window.addEventListener('load', function () {
         document.querySelectorAll('.tab-panel.active .plotly-graph-div').forEach(function (div) {
             if (window.Plotly) { try { Plotly.relayout(div, { autosize: true }); } catch (e) {} }
+        });
+
+        // Patch legend group titles on all Plotly divs, and re-patch after each re-render.
+        document.querySelectorAll('.plotly-graph-div').forEach(function (gd) {
+            _patchLegendGroupTitles(gd);
+            gd.on('plotly_afterplot', function () { _patchLegendGroupTitles(gd); });
         });
 
         // ---- Make every plain-text system-name cell clickable ----
@@ -812,9 +856,23 @@ function _drawLegend() {
     });
 }
 
-function openSysModal(sa) {
+function openSysModal(sa, fallbackName) {
     var d = (typeof SYSTEM_DATA !== 'undefined') && SYSTEM_DATA[String(sa)];
-    if (!d) return;
+    if (!d) {
+        var sysName = fallbackName || ('System ' + sa);
+        document.getElementById('sys-modal-ttl').textContent = sysName;
+        document.getElementById('sys-modal-sc').textContent = 'no scan data';
+        document.getElementById('sys-modal').classList.add('open');
+        var canvas = document.getElementById('sys-canvas');
+        if (canvas) {
+            canvas.width = 680; canvas.height = 80;
+            var ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#040410'; ctx.fillRect(0, 0, 680, 80);
+            ctx.fillStyle = '#556688'; ctx.font = '13px monospace';
+            ctx.fillText('No detailed body scan data available for this system.', 16, 46);
+        }
+        return;
+    }
     _sysData = d;
     document.getElementById('sys-modal-ttl').textContent = d.name;
     document.getElementById('sys-modal-sc').textContent  = d.sc ? '(' + d.sc + ')' : '';
@@ -1342,7 +1400,7 @@ function _drawSys() {
     document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeSysModal(); });
     document.addEventListener('click', function(e) {
         var link = e.target.closest('.sys-link');
-        if (link && link.dataset.sa) openSysModal(link.dataset.sa);
+        if (link && link.dataset.sa) openSysModal(link.dataset.sa, link.textContent.trim());
     });
 }());
 """
@@ -2102,6 +2160,451 @@ def _build_species_section(oval_df: pd.DataFrame,
 
 
 # ---------------------------------------------------------------------------
+# Notable Stellar Phenomena
+# ---------------------------------------------------------------------------
+
+# Ordered: Seed Pods before Plants so "Gyre Pod" doesn't match "Gyre Tree" rule.
+_NSP_TAXONOMY: list[tuple[str, str, str]] = [
+    # (keyword_in_display_name,  category,             subcategory)
+    ("E-Type",            "Anomalies",          "E-Type Anomalies"),
+    ("K-Type",            "Anomalies",          "K-Type Anomalies"),
+    ("L-Type",            "Anomalies",          "L-Type Anomalies"),
+    ("P-Type",            "Anomalies",          "P-Type Anomalies"),
+    ("Q-Type",            "Anomalies",          "Q-Type Anomalies"),
+    ("T-Type",            "Anomalies",          "T-Type Anomalies"),
+    ("Storm Cloud",       "Lagrange Clouds",    "Storm Clouds"),
+    ("Lagrange Cloud",    "Lagrange Clouds",    "Lagrange Clouds"),
+    ("Calcite Plate",     "Mineral Formations", "Calcite Plates"),
+    ("Ice Crystal",       "Mineral Formations", "Ice Crystals"),
+    ("Lattice Mineral",   "Mineral Formations", "Lattice Mineral Spheres"),
+    ("Metallic Crystal",  "Mineral Formations", "Metallic Crystals"),
+    ("Silicate Crystal",  "Mineral Formations", "Silicate Crystals"),
+    ("Solid Mineral",     "Mineral Formations", "Solid Mineral Spheres"),
+    ("Aster Pod",         "Seed Pods",          "Aster Pods"),
+    ("Chalice Pod",       "Seed Pods",          "Chalice Pods"),
+    ("Collared Pod",      "Seed Pods",          "Collared Pods"),
+    ("Gyre Pod",          "Seed Pods",          "Gyre Pods"),
+    ("Octahedral Pod",    "Seed Pods",          "Octahedral Pods"),
+    ("Peduncle Pod",      "Seed Pods",          "Peduncle Pods"),
+    ("Quadripartite Pod", "Seed Pods",          "Quadripartite Pods"),
+    ("Rhizome Pod",       "Seed Pods",          "Rhizome Pods"),
+    ("Stolon Pod",        "Seed Pods",          "Stolon Pods"),
+    ("Aster Tree",        "Plants",             "Aster Trees"),
+    ("Gyre Tree",         "Plants",             "Gyre Trees"),
+    ("Peduncle Tree",     "Plants",             "Peduncle Trees"),
+    ("Stolon Tree",       "Plants",             "Stolon Trees"),
+    ("Void Heart",        "Plants",             "Void Hearts"),
+    ("Bell Mollusc",      "Molluscs",           "Bell Molluscs"),
+    ("Bulb Mollusc",      "Molluscs",           "Bulb Molluscs"),
+    ("Bullet Mollusc",    "Molluscs",           "Bullet Molluscs"),
+    ("Capsule Mollusc",   "Molluscs",           "Capsule Molluscs"),
+    ("Globe Mollusc",     "Molluscs",           "Globe Molluscs"),
+    ("Gourd Mollusc",     "Molluscs",           "Gourd Molluscs"),
+    ("Parasol Mollusc",   "Molluscs",           "Parasol Molluscs"),
+    ("Reel Mollusc",      "Molluscs",           "Reel Molluscs"),
+    ("Squid Mollusc",     "Molluscs",           "Squid Molluscs"),
+    ("Torus Mollusc",     "Molluscs",           "Torus Molluscs"),
+    ("Umbrella Mollusc",  "Molluscs",           "Umbrella Molluscs"),
+]
+
+_NSP_CATEGORY_ORDER = [
+    "Anomalies",
+    "Lagrange Clouds",
+    "Mineral Formations",
+    "Molluscs",
+    "Plants",
+    "Seed Pods",
+]
+
+
+# Fallback classifier keyed on raw codex name when name_localised is null.
+# IMPORTANT: more-specific prefixes MUST come before shorter/broader ones.
+# Lagrange Cloud organisms use $Codex_Ent_LagrangeCloud_<type>_ prefix,
+# so they must be listed before the bare $Codex_Ent_LagrangeCloud catch-all.
+_NSP_CODEX_TAXONOMY: list[tuple[str, str, str]] = [
+    # Real in-game codex key prefixes (fires when name_localised is null).
+    # Anomalies — particle clouds
+    ("$Codex_Ent_L_Phn_Part_",          "Anomalies",          "Anomaly"),
+    # Lagrange Clouds (Storm variants have _Storm_ in the name but same prefix)
+    ("$Codex_Ent_Gas_Clds_",            "Lagrange Clouds",    "Lagrange Clouds"),
+    # Mineral Formations — crystals (specific before generic)
+    ("$Codex_Ent_L_Cry_IcCry_",         "Mineral Formations", "Ice Crystals"),
+    ("$Codex_Ent_L_Cry_MetCry_",        "Mineral Formations", "Metallic Crystals"),
+    ("$Codex_Ent_L_Cry_QtzCry_",        "Mineral Formations", "Silicate Crystals"),
+    ("$Codex_Ent_L_Cry_",               "Mineral Formations", "Crystals"),
+    # Mineral Formations — other space formations
+    ("$Codex_Ent_L_Org_PltFun_",        "Mineral Formations", "Calcite Plates"),
+    ("$Codex_Ent_SPOI_Ball_Lattice",    "Mineral Formations", "Lattice Mineral Spheres"),
+    ("$Codex_Ent_SPOI_Ball_",           "Mineral Formations", "Solid Mineral Spheres"),
+    # Molluscs — large (L_Org_Moll03: V1=Parasol, V2=Bulb, V3=Umbrella, V4=Capsule, V6=Reel)
+    ("$Codex_Ent_L_Org_Moll03_V1_",    "Molluscs",           "Parasol Molluscs"),
+    ("$Codex_Ent_L_Org_Moll03_V2_",    "Molluscs",           "Bulb Molluscs"),
+    ("$Codex_Ent_L_Org_Moll03_V3_",    "Molluscs",           "Umbrella Molluscs"),
+    ("$Codex_Ent_L_Org_Moll03_V4_",    "Molluscs",           "Capsule Molluscs"),
+    ("$Codex_Ent_L_Org_Moll03_V6_",    "Molluscs",           "Reel Molluscs"),
+    ("$Codex_Ent_L_Org_Moll03_",       "Molluscs",           "Mollusc"),
+    # Molluscs — small (V1=Gourd, V2=Torus, V3=Squid, V4=Bullet, V5=Globe, V6=Bell)
+    ("$Codex_Ent_Small_Org_Moll01_V1_","Molluscs",           "Gourd Molluscs"),
+    ("$Codex_Ent_Small_Org_Moll01_V2_","Molluscs",           "Torus Molluscs"),
+    ("$Codex_Ent_Small_Org_Moll01_V3_","Molluscs",           "Squid Molluscs"),
+    ("$Codex_Ent_Small_Org_Moll01_V4_","Molluscs",           "Bullet Molluscs"),
+    ("$Codex_Ent_Small_Org_Moll01_V5_","Molluscs",           "Globe Molluscs"),
+    ("$Codex_Ent_Small_Org_Moll01_V6_","Molluscs",           "Bell Molluscs"),
+    ("$Codex_Ent_Small_Org_Moll01_",   "Molluscs",           "Mollusc"),
+    # Plants
+    ("$Codex_Ent_L_Seed_Pln01_",       "Plants",             "Peduncle Trees"),
+    ("$Codex_Ent_L_Seed_Pln02_",       "Plants",             "Aster Trees"),
+    ("$Codex_Ent_L_Seed_SdRt02_",      "Plants",             "Stolon Trees"),
+    ("$Codex_Ent_L_Seed_",             "Plants",             "Plant"),
+    ("$Codex_Ent_SPOI_SeedPolyp01_",   "Plants",             "Gyre Trees"),
+    ("$Codex_Ent_SPOI_SeedWeed01_",    "Plants",             "Void Hearts"),
+    # Seed Pods
+    ("$Codex_Ent_S_Seed_SdTp01_",      "Seed Pods",          "Peduncle Pods"),
+    ("$Codex_Ent_S_Seed_SdTp02_",      "Seed Pods",          "Aster Pods"),
+    ("$Codex_Ent_S_Seed_SdTp03_",      "Seed Pods",          "Octahedral Pods"),
+    ("$Codex_Ent_S_Seed_SdTp04_",      "Seed Pods",          "Collared Pods"),
+    ("$Codex_Ent_S_Seed_SdTp05_",      "Seed Pods",          "Chalice Pods"),
+    ("$Codex_Ent_S_Seed_SdTp06_",      "Seed Pods",          "Gyre Pods"),
+    ("$Codex_Ent_S_Seed_SdTp07_",      "Seed Pods",          "Rhizome Pods"),
+    ("$Codex_Ent_S_Seed_SdTp08_",      "Seed Pods",          "Quadripartite Pods"),
+    ("$Codex_Ent_S_Seed_",             "Seed Pods",          "Seed Pod"),
+    ("$Codex_Ent_SPOI_Root_Seeds_",    "Seed Pods",          "Stolon Pods"),
+]
+
+
+
+
+_ANOMALY_NUM_RE = re.compile(r'\b([a-z])\d+-type anomaly\b', re.IGNORECASE)
+_ANOMALY_LETTER_MAP = {
+    'E': 'E-Type Anomalies', 'K': 'K-Type Anomalies',
+    'L': 'L-Type Anomalies', 'P': 'P-Type Anomalies',
+    'Q': 'Q-Type Anomalies', 'T': 'T-Type Anomalies',
+}
+
+_CODEX_REGION_NAMES: dict[int, str] = {
+    1: "Galactic Centre", 2: "Empyrean Straits", 3: "Ryker's Hope",
+    4: "Odin's Hold", 5: "Norma Arm", 6: "Arcadian Stream",
+    7: "Izanami", 8: "Inner Orion-Perseus Conflux",
+    9: "Inner Scutum-Centaurus Arm", 10: "Norma Expanse",
+    11: "Trojan Belt", 12: "The Veils", 13: "Newton's Vault",
+    14: "The Conduit", 15: "Outer Orion-Perseus Conflux",
+    16: "Orion-Cygnus Arm", 17: "Temple", 18: "Inner Orion Spur",
+    19: "Hawking's Gap", 20: "Dryman's Point",
+    21: "Sagittarius-Carina Arm", 22: "Mare Somnia", 23: "Acheron",
+    24: "Formorian Frontier", 25: "Hieronymus Delta",
+    26: "Outer Scutum-Centaurus Arm", 27: "Outer Arm",
+    28: "Aquila's Halo", 29: "Errant Marches", 30: "Perseus Arm",
+    31: "Formidine Rift", 32: "Vulcan Gate", 33: "Elysian Shore",
+    34: "Sanguineous Rim", 35: "Outer Orion Spur",
+    36: "Achilles's Altar", 37: "Xibalba", 38: "Lyra's Song",
+    39: "Tenebrae", 40: "The Abyss", 41: "Kepler's Crest",
+    42: "The Void",
+}
+_CODEX_REGION_RE = re.compile(r'\$Codex_RegionName_(\d+)', re.IGNORECASE)
+
+
+def _decode_region(raw: str | None) -> str:
+    if not raw:
+        return "—"
+    m = _CODEX_REGION_RE.search(raw)
+    if m:
+        return _CODEX_REGION_NAMES.get(int(m.group(1)), raw)
+    return raw
+
+
+def _classify_nsp(display_name: str,
+                  codex_name: str = "",
+                  sub_category: str = "") -> tuple[str, str]:
+    dn = (display_name or "").lower()
+
+    # Handle numbered anomaly variants: "K01-Type Anomaly", "E04-Type Anomaly" etc.
+    m = _ANOMALY_NUM_RE.search(dn)
+    if m:
+        letter = m.group(1).upper()
+        return "Anomalies", _ANOMALY_LETTER_MAP.get(letter, f"{letter}-Type Anomalies")
+
+    # 1. Localised display name keyword match
+    for kw, cat, subcat in _NSP_TAXONOMY:
+        if kw.lower() in dn:
+            return cat, subcat
+
+    # 2. Raw codex key prefix match (fires when name_localised is null)
+    cn = codex_name if isinstance(codex_name, str) else ""
+    if cn:
+        for prefix, cat, subcat in _NSP_CODEX_TAXONOMY:
+            if cn.startswith(prefix):
+                return cat, subcat
+
+    # 3. Sub-category field fallback (broad but reliable)
+    sc = (sub_category or "").lower()
+    label = display_name if display_name and not display_name.startswith("$") else "Unknown"
+    if "anomal" in sc:
+        return "Anomalies", label
+    # "lagrange" in sub_category only means "Lagrange Cloud" when no more specific
+    # codex prefix matched above — i.e. it really is the cloud entity itself.
+    if "lagrange" in sc and not cn:
+        return "Lagrange Clouds", label
+    if "mollusc" in sc:
+        return "Molluscs", label
+    if "plant" in sc or "tree" in sc:
+        return "Plants", label
+    if "pod" in sc:
+        return "Seed Pods", label
+    if "mineral" in sc or "formation" in sc or "crystal" in sc:
+        return "Mineral Formations", label
+    if "organic" in sc:
+        # Broad organic structures — try to narrow by codex_name fragment
+        cn_l = cn.lower()
+        for frag, cat, subcat in [
+            ("torus",     "Molluscs",  "Torus Molluscs"),
+            ("bell",      "Molluscs",  "Bell Molluscs"),
+            ("bulb",      "Molluscs",  "Bulb Molluscs"),
+            ("bullet",    "Molluscs",  "Bullet Molluscs"),
+            ("capsule",   "Molluscs",  "Capsule Molluscs"),
+            ("globe",     "Molluscs",  "Globe Molluscs"),
+            ("gourd",     "Molluscs",  "Gourd Molluscs"),
+            ("parasol",   "Molluscs",  "Parasol Molluscs"),
+            ("reel",      "Molluscs",  "Reel Molluscs"),
+            ("squid",     "Molluscs",  "Squid Molluscs"),
+            ("umbrella",  "Molluscs",  "Umbrella Molluscs"),
+            ("gyre",      "Plants",    "Gyre Trees"),
+            ("aster",     "Plants",    "Aster Trees"),
+            ("peduncle",  "Plants",    "Peduncle Trees"),
+            ("stolon",    "Plants",    "Stolon Trees"),
+            ("void",      "Plants",    "Void Hearts"),
+            ("chalice",   "Seed Pods", "Chalice Pods"),
+            ("collar",    "Seed Pods", "Collared Pods"),
+            ("octahedral","Seed Pods", "Octahedral Pods"),
+            ("quadri",    "Seed Pods", "Quadripartite Pods"),
+            ("rhizome",   "Seed Pods", "Rhizome Pods"),
+        ]:
+            if frag in cn_l or frag in dn:
+                return cat, subcat
+        return "Molluscs", label  # safest default for organic structures
+
+    return "Other", display_name or "Unknown"
+
+
+def _nsp_category_panel_html(cat: str, df_cat: pd.DataFrame) -> str:
+    n_sys = df_cat["system_name"].nunique()
+    n_new = int(df_cat["is_new_entry"].sum())
+    n_sub = df_cat["nsp_subcat"].nunique()
+    return _stats_card([
+        ("Types found",     f"{n_sub:,}"),
+        ("Systems scanned", f"{n_sys:,}"),
+        ("New codex entries", f"{n_new:,}"),
+    ])
+
+
+def _nsp_subcat_panel_html(df_sub: pd.DataFrame, cur_pos: dict | None) -> str:
+    df_sub = df_sub.drop_duplicates(subset=["system_address", "display_name"])
+    dist_th = "<th>Distance</th>" if cur_pos else ""
+    rows = []
+    for _, r in df_sub.iterrows():
+        sa  = r.get("system_address")
+        sys = r.get("system_name", "—")
+        nm  = r.get("display_name") or "—"
+        reg = _decode_region(r.get("region"))
+        ts  = str(r.get("timestamp", ""))[:10]
+        new = '<span class="check">✓</span>' if r.get("is_new_entry") else ""
+        d   = _dist_ly(cur_pos, r.get("x"), r.get("y"), r.get("z"))
+        sys_html = (f'<span class="sys-link" data-sa="{int(sa)}">{sys}</span>'
+                    if sa else sys)
+        rows.append(
+            f"<tr><td>{nm}</td>"
+            f'<td style="text-align:center">{new}</td>'
+            f"<td>{reg}</td><td>{ts}</td><td>{sys_html}</td>"
+            + (f'<td class="num" data-sort="{d:.0f}">{_fmt_dist(d)}</td>' if cur_pos else "")
+            + "</tr>"
+        )
+    if not rows:
+        return '<p class="empty-note">No entries found.</p>'
+    return (
+        '<div class="table-wrap"><table class="detail-table sortable"><thead>'
+        f"<tr><th>Variant</th><th>New codex entry</th><th>Region</th>"
+        f"<th>Date</th><th>System</th>{dist_th}</tr>"
+        f'</thead><tbody>{"".join(rows)}</tbody></table></div>'
+    )
+
+
+def _build_nsp_section(df_det: "pd.DataFrame", df_codex: "pd.DataFrame",
+                       cur_pos: dict | None = None) -> str:
+    # ── Classify codex entries ────────────────────────────────────────────────
+    df = df_codex.copy()
+    if not df.empty:
+        df["nsp_cat"], df["nsp_subcat"] = zip(*df.apply(
+            lambda r: _classify_nsp(
+                r["display_name"],
+                r["codex_name"] if isinstance(r.get("codex_name"), str) else "",
+                r["sub_category"] if isinstance(r.get("sub_category"), str) else "",
+            ),
+            axis=1,
+        ))
+
+    # ── Overview panel ────────────────────────────────────────────────────────
+    n_det  = len(df_det)
+    n_cod  = len(df)
+    n_new  = int(df["is_new_entry"].sum()) if not df.empty else 0
+    n_sys  = df["system_name"].nunique()   if not df.empty else 0
+    n_cats = df["nsp_cat"].nunique()       if not df.empty else 0
+
+    overview_card = _stats_card([
+        ("Systems with NSP signals", f"{n_det:,}"),
+        ("Codex entries recorded",   f"{n_cod:,}"),
+        ("New codex entries",         f"{n_new:,}"),
+        ("Unique systems scanned",   f"{n_sys:,}"),
+        ("Categories found",         f"{n_cats:,}"),
+    ])
+
+    dist_th = "<th>Distance</th>" if cur_pos else ""
+
+    # Build display_name -> hex color matching the 3D map coloring
+    nsp_color_lookup: dict[str, str] = {}
+    if not df.empty:
+        _cat_subcat_order: dict[str, list[str]] = {
+            cat: sorted(grp["nsp_subcat"].unique())
+            for cat, grp in df.groupby("nsp_cat")
+        }
+        for dn, cat, subcat in (
+            df[["display_name", "nsp_cat", "nsp_subcat"]]
+            .drop_duplicates()
+            .itertuples(index=False)
+        ):
+            subcats = _cat_subcat_order.get(cat, [subcat])
+            idx = subcats.index(subcat) if subcat in subcats else 0
+            nsp_color_lookup[dn] = mp._nsp_color(cat, idx, len(subcats))
+
+    def _nsp_tag(name: str) -> str:
+        fg = nsp_color_lookup.get(name, "#88ddaa")
+        r, g, b = int(fg[1:3], 16), int(fg[3:5], 16), int(fg[5:7], 16)
+        bg = f"#{r // 5:02x}{g // 5:02x}{b // 5:02x}"
+        return (f'<span class="bio-tag" style="color:{fg};border-color:{fg};'
+                f'background:{bg}">{name}</span>')
+
+    # Build system_address -> sorted unique NSP display names from codex data
+    nsp_by_sys: dict[int, list[str]] = {}
+    if not df.empty and "system_address" in df.columns:
+        for sa_val, grp in df.groupby("system_address"):
+            nsp_by_sys[int(sa_val)] = sorted(grp["display_name"].dropna().unique().tolist())
+
+    # FSS detections table
+    det_rows = []
+    for _, r in df_det.iterrows():
+        sa  = r.get("system_address")
+        sys = r.get("system_name", "—")
+        sc  = r.get("star_class") or "—"
+        ts  = str(r.get("detected_at", ""))[:10]
+        d   = _dist_ly(cur_pos, r.get("x"), r.get("y"), r.get("z"))
+        sys_html = (f'<span class="sys-link" data-sa="{int(sa)}">{sys}</span>'
+                    if sa else sys)
+        nsps = nsp_by_sys.get(int(sa), []) if sa else []
+        nsp_cell = (
+            " ".join(_nsp_tag(n) for n in nsps)
+            if nsps else '<span class="dim">not catalogued</span>'
+        )
+        det_rows.append(
+            f'<tr><td class="nowrap">{sys_html}</td>'
+            f'<td class="nowrap">{sc}</td>'
+            f'<td class="nowrap">{ts}</td>'
+            f"<td>{nsp_cell}</td>"
+            + (f'<td class="num nowrap" data-sort="{d:.0f}">{_fmt_dist(d)}</td>' if cur_pos else "")
+            + "</tr>"
+        )
+    det_html = (
+        '<div class="table-wrap"><table class="detail-table sortable"><thead>'
+        f"<tr><th>System</th><th>Star class</th><th>Detected</th><th>NSPs found</th>{dist_th}</tr>"
+        f'</thead><tbody>{"".join(det_rows)}</tbody></table></div>'
+        if det_rows else
+        '<p class="empty-note">No NSP signals recorded — FSS scan data required.</p>'
+    )
+
+    # Galaxy map (needs nsp_cat / nsp_subcat columns)
+    map_fig = mp.plot_nsp_map_3d(df if not df.empty else df_codex,
+                                  current_pos=cur_pos)
+    map_html = (_plotly(map_fig) if map_fig is not None
+                else '<p class="empty-note">No codex data for map.</p>')
+
+    overview_panel_id = "nsp-overview"
+    panels: dict[str, str] = {
+        overview_panel_id: (
+            overview_card
+            + _tab_group("nsp-ov", [
+                ("NSP Map",        map_html),
+                ("FSS Detections", det_html),
+            ])
+        )
+    }
+
+    # ── Category groups (mirrors _build_species_section pattern) ─────────────
+    cat_groups: list[tuple[str, str, list[tuple[str, str]]]] = []
+    cat_idx = sc_idx = 0
+
+    ordered_cats = _NSP_CATEGORY_ORDER + (
+        ["Other"] if not df.empty and "Other" in df["nsp_cat"].values else []
+    )
+    for cat in ordered_cats:
+        if df.empty:
+            continue
+        df_cat = df[df["nsp_cat"] == cat]
+        if df_cat.empty:
+            continue
+
+        cat_panel_id = f"nsp-cat-{cat_idx}"
+        cat_idx += 1
+        panels[cat_panel_id] = _nsp_category_panel_html(cat, df_cat)
+
+        subcat_items: list[tuple[str, str]] = []
+        for subcat, df_sub in df_cat.groupby("nsp_subcat", sort=True):
+            sc_id = f"nsp-sc-{sc_idx}"
+            sc_idx += 1
+            n = df_sub["system_name"].nunique()
+            subcat_items.append((f"{subcat} ({n:,})", sc_id))
+            panels[sc_id] = _nsp_subcat_panel_html(df_sub, cur_pos)
+
+        cat_groups.append((cat, cat_panel_id, subcat_items))
+
+    # ── List block ────────────────────────────────────────────────────────────
+    btns = [
+        f'<button class="detail-btn detail-overview-btn active" '
+        f'data-panel="{overview_panel_id}">Overview</button>',
+        '<input type="search" placeholder="Search…">',
+    ]
+    for cat_label, cat_panel_id, subcat_items in cat_groups:
+        sc_btns = "".join(
+            f'<button class="detail-btn species-btn" data-panel="{sc_id}" '
+            f'data-label="{label}">{label}</button>'
+            for label, sc_id in subcat_items
+        )
+        btns.append(
+            f'<div class="genus-group">'
+            f'<button class="detail-btn genus-header" data-panel="{cat_panel_id}" '
+            f'data-label="{cat_label}">{cat_label}</button>'
+            f'<div class="genus-items">{sc_btns}</div>'
+            f'</div>'
+        )
+    list_block = f'<div class="detail-list">{"".join(btns)}</div>'
+
+    # ── Content block ─────────────────────────────────────────────────────────
+    panel_html = [
+        f'<div class="detail-panel active" id="{overview_panel_id}">'
+        f'{panels[overview_panel_id]}</div>'
+    ]
+    for cat_label, cat_panel_id, subcat_items in cat_groups:
+        panel_html.append(
+            f'<div class="detail-panel" id="{cat_panel_id}">'
+            f'{panels[cat_panel_id]}</div>'
+        )
+        for label, sc_id in subcat_items:
+            panel_html.append(
+                f'<div class="detail-panel" id="{sc_id}">'
+                f'{panels[sc_id]}</div>'
+            )
+
+    content_block = f'<div class="detail-content">{"".join(panel_html)}</div>'
+    return f'<div class="detail-layout">{list_block}{content_block}</div>'
+
+
+# ---------------------------------------------------------------------------
 # Body-type catalogue
 # ---------------------------------------------------------------------------
 
@@ -2731,6 +3234,16 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     ))
 
     # ------------------------------------------------------------------
+    # Notable Stellar Phenomena
+    # ------------------------------------------------------------------
+    print("  Notable Stellar Phenomena...")
+    df_nsp_det    = st.nsp_detections(conn, cur_pos)
+    df_nsp_codex  = st.nsp_codex_entries(conn)
+    sections.append(_section("nsp", "Notable Stellar Phenomena",
+        _build_nsp_section(df_nsp_det, df_nsp_codex, cur_pos)
+    ))
+
+    # ------------------------------------------------------------------
     # Assemble
     # ------------------------------------------------------------------
     print("  Assembling HTML...")
@@ -2747,6 +3260,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         ("species-cat", "Species Catalogue"),
         ("body-cat",    "Body-type Catalogue"),
         ("star-cat",    "Star-class Catalogue"),
+        ("nsp",         "Notable Stellar Phenomena"),
     ]
     nav_html = "\n".join(
         f'    <a href="#{sid}">{label}</a>' for sid, label in nav_items
