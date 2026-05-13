@@ -178,6 +178,255 @@ def _current_pos_trace_3d(pos: dict) -> go.Scatter3d:
 
 
 # ---------------------------------------------------------------------------
+# Galactic region overlay helpers
+# ---------------------------------------------------------------------------
+# Region bitmap parameters from klightspeed/EliteDangerousRegionMap
+_REG_X0    = -49985.0       # game X at pixel column 0
+_REG_Z0    = -24105.0       # game Z at bitmap row 0  (row 0 = minimum Z)
+_REG_PX_SZ =  4096.0 / 83  # ly per pixel (≈ 49.35 ly)
+
+_region_bm_cache: dict[int, np.ndarray] = {}
+
+
+def _get_region_bm(stride: int = 4) -> np.ndarray:
+    """Decode RLE regionmap to a subsampled uint8 array. Cached per stride."""
+    if stride in _region_bm_cache:
+        return _region_bm_cache[stride]
+    from edda.analysis._region_map_data import regionmap as _rle
+    bm = np.zeros((2048, 2048), dtype=np.uint8)
+    for zi, row in enumerate(_rle):
+        xi = 0
+        for length, rid in row:
+            bm[zi, xi:xi + length] = rid
+            xi += length
+    if stride > 1:
+        bm = bm[::stride, ::stride]
+    _region_bm_cache[stride] = bm
+    return bm
+
+
+def _region_boundary_segments(stride: int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Vectorised boundary extraction. Returns (xs, zs) with NaN separators —
+    one segment per cell-boundary edge, placed at the exact midpoint between cells.
+    Each boundary edge is represented exactly once (no double lines).
+    """
+    bm    = _get_region_bm(stride)
+    sc    = _REG_PX_SZ * stride
+    named = bm > 0
+
+    # Horizontal edges: boundary between row z and row z+1
+    h_mask          = (bm[:-1, :] != bm[1:, :]) & (named[:-1, :] | named[1:, :])
+    hz, hx          = np.where(h_mask)
+    h_x0            = hx         * sc + _REG_X0
+    h_x1            = (hx + 1)   * sc + _REG_X0
+    h_z             = (hz + 0.5) * sc + _REG_Z0   # midpoint between the two rows
+    h_nan           = np.full(len(hz), np.nan)
+    h_xs            = np.column_stack([h_x0, h_x1, h_nan]).ravel()
+    h_zs            = np.column_stack([h_z,  h_z,  h_nan]).ravel()
+
+    # Vertical edges: boundary between col x and col x+1
+    v_mask          = (bm[:, :-1] != bm[:, 1:]) & (named[:, :-1] | named[:, 1:])
+    vz, vx          = np.where(v_mask)
+    v_x             = (vx + 0.5) * sc + _REG_X0   # midpoint between the two cols
+    v_z0            = vz          * sc + _REG_Z0
+    v_z1            = (vz + 1)    * sc + _REG_Z0
+    v_nan           = np.full(len(vz), np.nan)
+    v_xs            = np.column_stack([v_x, v_x,  v_nan]).ravel()
+    v_zs            = np.column_stack([v_z0, v_z1, v_nan]).ravel()
+
+    return np.concatenate([h_xs, v_xs]), np.concatenate([h_zs, v_zs])
+
+
+def _region_boundary_polylines(stride: int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Same boundary edges as _region_boundary_segments but adjacent collinear
+    stubs are merged into continuous polylines before NaN separators are
+    inserted.  This produces solid lines in Plotly 3D instead of dashes.
+    """
+    bm    = _get_region_bm(stride)
+    sc    = _REG_PX_SZ * stride
+    named = bm > 0
+
+    all_xs: list[np.ndarray] = []
+    all_zs: list[np.ndarray] = []
+
+    # ── Horizontal runs (same bitmap row, consecutive x) ─────────────────
+    h_mask = (bm[:-1, :] != bm[1:, :]) & (named[:-1, :] | named[1:, :])
+    hz, hx = np.where(h_mask)
+    if len(hz):
+        order = np.lexsort([hx, hz])           # sort by (row, col)
+        hz, hx = hz[order], hx[order]
+        # break whenever row changes or x is not the next column
+        brk = np.where((hz[1:] != hz[:-1]) | (hx[1:] != hx[:-1] + 1))[0] + 1
+        s, e = np.concatenate([[0], brk]), np.concatenate([brk - 1, [len(hz) - 1]])
+        x0  = hx[s]         * sc + _REG_X0
+        x1  = (hx[e] + 1)   * sc + _REG_X0
+        z   = (hz[s] + 0.5) * sc + _REG_Z0
+        nan = np.full(len(s), np.nan)
+        all_xs.append(np.column_stack([x0, x1, nan]).ravel())
+        all_zs.append(np.column_stack([z,  z,  nan]).ravel())
+
+    # ── Vertical runs (same bitmap column, consecutive z) ─────────────────
+    v_mask = (bm[:, :-1] != bm[:, 1:]) & (named[:, :-1] | named[:, 1:])
+    vz, vx = np.where(v_mask)
+    if len(vz):
+        order = np.lexsort([vz, vx])           # sort by (col, row)
+        vz, vx = vz[order], vx[order]
+        brk = np.where((vx[1:] != vx[:-1]) | (vz[1:] != vz[:-1] + 1))[0] + 1
+        s, e = np.concatenate([[0], brk]), np.concatenate([brk - 1, [len(vz) - 1]])
+        x   = (vx[s] + 0.5) * sc + _REG_X0
+        z0  = vz[s]          * sc + _REG_Z0
+        z1  = (vz[e] + 1)    * sc + _REG_Z0
+        nan = np.full(len(s), np.nan)
+        all_xs.append(np.column_stack([x,  x,  nan]).ravel())
+        all_zs.append(np.column_stack([z0, z1, nan]).ravel())
+
+    if not all_xs:
+        return np.array([]), np.array([])
+    return np.concatenate(all_xs), np.concatenate(all_zs)
+
+
+def _region_centroids_ly(stride: int = 4) -> list[tuple[str, float, float]]:
+    """List of (name, x_ly, z_ly) for each region's pixel centroid."""
+    from edda.analysis._region_map_data import regions as _names
+    bm = _get_region_bm(stride)
+    sc = _REG_PX_SZ * stride
+    result = []
+    for rid in range(1, 43):
+        pz, px = np.where(bm == rid)
+        if len(px) == 0:
+            continue
+        result.append((_names[rid], float(px.mean()) * sc + _REG_X0,
+                       float(pz.mean()) * sc + _REG_Z0))
+    return result
+
+
+def _overlay_regions_2d(ax) -> None:
+    """Overlay region boundary image + name labels on a matplotlib X/Z axis."""
+    bm    = _get_region_bm(stride=1)
+    named = bm > 0
+    bnd   = np.zeros(bm.shape, dtype=bool)
+    bnd[:-1, :] |= (bm[:-1, :] != bm[1:, :]) & (named[:-1, :] | named[1:, :])
+    bnd[:, :-1] |= (bm[:, :-1] != bm[:, 1:]) & (named[:, :-1] | named[:, 1:])
+    rgba      = np.zeros((*bm.shape, 4), dtype=np.float32)
+    rgba[bnd] = [0.55, 0.55, 0.55, 0.50]
+    # extent: [left, right, bottom, top] in data coords; origin='lower' → row 0 = bottom
+    ax.imshow(rgba,
+              extent=[_REG_X0, _REG_X_MAX, _REG_Z0, _REG_Z_MAX],
+              origin="lower", aspect="auto", zorder=3, interpolation="bilinear")
+    for name, x_ly, z_ly in _region_centroids_ly(stride=4):
+        ax.text(x_ly, z_ly, name, color="#aaaaaa", fontsize=4.5, alpha=0.55,
+                ha="center", va="center", zorder=4, fontweight="bold")
+
+
+_REGION_LEGENDGROUP  = "Galactic Regions"
+# Full spatial extent of the 2048-pixel region bitmap in game coordinates
+_REG_X_MAX = _REG_X0 + 2048 * _REG_PX_SZ   # ≈ +51,155 ly
+_REG_Z_MAX = _REG_Z0 + 2048 * _REG_PX_SZ   # ≈ +77,075 ly
+
+_region_img_cache: dict[int, str] = {}      # stride → base64 PNG
+
+
+def _region_boundary_image_b64(stride: int = 1) -> str:
+    """
+    RGBA PNG of region boundary lines, base64-encoded. Cached per stride.
+    Boundaries are white at ~40 % alpha; all other pixels fully transparent.
+    Rendered at full stride=1 resolution (2048×2048) by default so the image
+    stays sharp when the user zooms into any part of the galaxy.
+    """
+    if stride in _region_img_cache:
+        return _region_img_cache[stride]
+    bm    = _get_region_bm(stride)
+    named = bm > 0
+    # One pixel per edge (upper / left cell only — no doubling)
+    bnd = np.zeros(bm.shape, dtype=bool)
+    bnd[:-1, :] |= (bm[:-1, :] != bm[1:, :]) & (named[:-1, :] | named[1:, :])
+    bnd[:, :-1] |= (bm[:, :-1] != bm[:, 1:]) & (named[:, :-1] | named[:, 1:])
+    rgba       = np.zeros((*bm.shape, 4), dtype=np.float32)
+    rgba[bnd]  = [0.55, 0.55, 0.55, 0.50]
+    # Flip rows: bitmap row 0 = z_min (bottom), but PNG/browser row 0 = top
+    buf = io.BytesIO()
+    plt.imsave(buf, rgba[::-1], format="png")
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode()
+    _region_img_cache[stride] = b64
+    return b64
+
+
+def _region_layout_image_2d() -> dict:
+    """Plotly layout-image dict that tiles the region boundary PNG under a 2-D X/Z plot."""
+    return dict(
+        source=f"data:image/png;base64,{_region_boundary_image_b64()}",
+        xref="x", yref="y",
+        x=_REG_X0,   y=_REG_Z_MAX,          # top-left corner in data coords
+        sizex=_REG_X_MAX - _REG_X0,
+        sizey=_REG_Z_MAX - _REG_Z0,
+        sizing="stretch",
+        opacity=1.0,                          # alpha baked into RGBA
+        layer="below",
+    )
+
+
+def _region_label_trace_2d() -> go.Scatter:
+    """Scatter trace with region name labels for a 2-D X/Z map."""
+    c = _region_centroids_ly(stride=4)
+    return go.Scatter(
+        x=[v[1] for v in c], y=[v[2] for v in c],
+        mode="text", text=[v[0] for v in c],
+        textfont=dict(color="rgba(180,180,180,0.55)", size=9),
+        hoverinfo="skip", showlegend=True,
+        legendgroup=_REGION_LEGENDGROUP,
+        legendgrouptitle=dict(text=_REGION_LEGENDGROUP),
+        name="Region labels",
+    )
+
+
+def _region_boundary_px_coords(stride: int) -> tuple[np.ndarray, np.ndarray]:
+    """(xs_ly, zs_ly) of boundary pixel centres. One pixel per boundary edge side."""
+    bm    = _get_region_bm(stride)
+    sc    = _REG_PX_SZ * stride
+    named = bm > 0
+    bnd   = np.zeros(bm.shape, dtype=bool)
+    bnd[:-1, :] |= (bm[:-1, :] != bm[1:, :]) & (named[:-1, :] | named[1:, :])
+    bnd[:, :-1] |= (bm[:, :-1] != bm[:, 1:]) & (named[:, :-1] | named[:, 1:])
+    pz, px = np.where(bnd)
+    return px.astype(float) * sc + _REG_X0, pz.astype(float) * sc + _REG_Z0
+
+
+def _region_traces_3d(y_plane: float = 0.0) -> list:
+    """
+    Scatter3d marker traces for region boundaries + labels on the galactic plane.
+    Uses pixel markers at stride=1 (49 ly spacing) so that adjacent dots are
+    sub-pixel at galaxy scale and appear as a solid continuous line.
+    """
+    xs, zs    = _region_boundary_px_coords(stride=1)
+    ys        = np.full(len(xs), y_plane)
+    centroids = _region_centroids_ly(stride=4)
+    return [
+        go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode="markers",
+            marker=dict(size=1.5, color="rgba(140,140,140,0.50)", symbol="square"),
+            hoverinfo="skip", showlegend=True,
+            legendgroup=_REGION_LEGENDGROUP,
+            legendgrouptitle=dict(text=_REGION_LEGENDGROUP),
+            name="Region boundaries",
+        ),
+        go.Scatter3d(
+            x=[c[1] for c in centroids],
+            y=[y_plane] * len(centroids),
+            z=[c[2] for c in centroids],
+            mode="text", text=[c[0] for c in centroids],
+            textfont=dict(color="rgba(180,180,180,0.55)", size=9),
+            hoverinfo="skip", showlegend=True,
+            legendgroup=_REGION_LEGENDGROUP,
+            name="Region labels",
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Static matplotlib maps
 # ---------------------------------------------------------------------------
 
@@ -228,6 +477,9 @@ def plot_galaxy_map_static(df: pd.DataFrame, out_path: Path | None,
         cb.ax.yaxis.label.set_color("white")
         cb.ax.tick_params(colors="white")
 
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    _overlay_regions_2d(ax)
+    ax.set_xlim(xlim); ax.set_ylim(ylim)
     _mark_landmarks_2d(ax)
     if current_pos:
         _mark_current_pos_2d(ax, current_pos)
@@ -312,6 +564,8 @@ def plot_galaxy_map_interactive(df: pd.DataFrame, out_path: Path | None,
             bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1,
         ),
     )
+    fig.add_layout_image(_region_layout_image_2d())
+    fig.add_trace(_region_label_trace_2d())
     fig.add_trace(_landmark_trace_2d())
     if current_pos:
         fig.add_trace(_current_pos_trace_2d(current_pos))
@@ -505,7 +759,7 @@ def plot_sector_map_interactive(df: pd.DataFrame, out_path: Path | None,
     )
 
     extra = [_current_pos_trace_3d(current_pos)] if current_pos else []
-    fig = go.Figure(data=[cube_trace, _landmark_trace_3d()] + extra)
+    fig = go.Figure(data=[cube_trace] + _region_traces_3d() + [_landmark_trace_3d()] + extra)
     fig.update_layout(
         title=dict(
             text=f"Elite Dangerous — Sector Heat Map 3D  ({len(df):,} sectors, 1200 ly cubes)",
@@ -706,7 +960,7 @@ def plot_sector_valuable_map_interactive(
     )
 
     extra = [_current_pos_trace_3d(current_pos)] if current_pos else []
-    fig = go.Figure(data=[cube_trace, _landmark_trace_3d()] + extra)
+    fig = go.Figure(data=[cube_trace] + _region_traces_3d() + [_landmark_trace_3d()] + extra)
     fig.update_layout(
         title=dict(
             text=f"Sector {label}  ({len(plot_df):,} sectors, 1200 ly cubes)",
@@ -819,7 +1073,7 @@ def plot_nsp_map_3d(df_codex: pd.DataFrame,
 
     extra = [_current_pos_trace_3d(current_pos)] if current_pos else []
     n_sys = df["system_address"].nunique()
-    fig = go.Figure(data=traces + [_landmark_trace_3d()] + extra)
+    fig = go.Figure(data=_region_traces_3d() + traces + [_landmark_trace_3d()] + extra)
     fig.update_layout(
         title=dict(
             text=f"Notable Stellar Phenomena — Galaxy Map ({n_sys:,} systems)",
