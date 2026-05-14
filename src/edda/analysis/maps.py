@@ -320,51 +320,24 @@ def _overlay_regions_2d(ax) -> None:
                 ha="center", va="center", zorder=4, fontweight="bold")
 
 
-_REGION_LEGENDGROUP  = "Galactic Regions"
+_REGION_LEGENDGROUP  = "Regions"
 # Full spatial extent of the 2048-pixel region bitmap in game coordinates
 _REG_X_MAX = _REG_X0 + 2048 * _REG_PX_SZ   # ≈ +51,155 ly
 _REG_Z_MAX = _REG_Z0 + 2048 * _REG_PX_SZ   # ≈ +77,075 ly
 
-_region_img_cache: dict[int, str] = {}      # stride → base64 PNG
 
 
-def _region_boundary_image_b64(stride: int = 1) -> str:
-    """
-    RGBA PNG of region boundary lines, base64-encoded. Cached per stride.
-    Boundaries are white at ~40 % alpha; all other pixels fully transparent.
-    Rendered at full stride=1 resolution (2048×2048) by default so the image
-    stays sharp when the user zooms into any part of the galaxy.
-    """
-    if stride in _region_img_cache:
-        return _region_img_cache[stride]
-    bm    = _get_region_bm(stride)
-    named = bm > 0
-    # One pixel per edge (upper / left cell only — no doubling)
-    bnd = np.zeros(bm.shape, dtype=bool)
-    bnd[:-1, :] |= (bm[:-1, :] != bm[1:, :]) & (named[:-1, :] | named[1:, :])
-    bnd[:, :-1] |= (bm[:, :-1] != bm[:, 1:]) & (named[:, :-1] | named[:, 1:])
-    rgba       = np.zeros((*bm.shape, 4), dtype=np.float32)
-    rgba[bnd]  = [0.55, 0.55, 0.55, 0.50]
-    # Flip rows: bitmap row 0 = z_min (bottom), but PNG/browser row 0 = top
-    buf = io.BytesIO()
-    plt.imsave(buf, rgba[::-1], format="png")
-    buf.seek(0)
-    b64 = base64.b64encode(buf.read()).decode()
-    _region_img_cache[stride] = b64
-    return b64
-
-
-def _region_layout_image_2d() -> dict:
-    """Plotly layout-image dict that tiles the region boundary PNG under a 2-D X/Z plot."""
-    return dict(
-        source=f"data:image/png;base64,{_region_boundary_image_b64()}",
-        xref="x", yref="y",
-        x=_REG_X0,   y=_REG_Z_MAX,          # top-left corner in data coords
-        sizex=_REG_X_MAX - _REG_X0,
-        sizey=_REG_Z_MAX - _REG_Z0,
-        sizing="stretch",
-        opacity=1.0,                          # alpha baked into RGBA
-        layer="below",
+def _region_boundary_trace_2d() -> go.Scatter:
+    """Scatter trace with region boundary markers for a toggleable 2-D X/Z legend entry."""
+    xs, zs = _region_boundary_px_coords(stride=3)
+    return go.Scatter(
+        x=xs.tolist(), y=zs.tolist(),
+        mode="markers",
+        marker=dict(size=1, color="rgba(140,140,140,0.50)", symbol="square"),
+        hoverinfo="skip", showlegend=True,
+        legendgroup="Regions",
+        legendgrouptitle=dict(text=_REGION_LEGENDGROUP, font=dict(color="white", size=11)),
+        name="Region boundaries",
     )
 
 
@@ -376,8 +349,7 @@ def _region_label_trace_2d() -> go.Scatter:
         mode="text", text=[v[0] for v in c],
         textfont=dict(color="rgba(180,180,180,0.55)", size=9),
         hoverinfo="skip", showlegend=True,
-        legendgroup=_REGION_LEGENDGROUP,
-        legendgrouptitle=dict(text=_REGION_LEGENDGROUP),
+        legendgroup="Regions",
         name="Region labels",
     )
 
@@ -409,9 +381,9 @@ def _region_traces_3d(y_plane: float = 0.0) -> list:
             mode="markers",
             marker=dict(size=1.5, color="rgba(140,140,140,0.50)", symbol="square"),
             hoverinfo="skip", showlegend=True,
-            legendgroup=_REGION_LEGENDGROUP,
-            legendgrouptitle=dict(text=_REGION_LEGENDGROUP),
             name="Region boundaries",
+            legendgroup="Regions",
+            legendgrouptitle=dict(text="Regions", font=dict(color="white", size=11)),
         ),
         go.Scatter3d(
             x=[c[1] for c in centroids],
@@ -420,8 +392,8 @@ def _region_traces_3d(y_plane: float = 0.0) -> list:
             mode="text", text=[c[0] for c in centroids],
             textfont=dict(color="rgba(180,180,180,0.55)", size=9),
             hoverinfo="skip", showlegend=True,
-            legendgroup=_REGION_LEGENDGROUP,
             name="Region labels",
+            legendgroup="Regions",
         ),
     ]
 
@@ -561,10 +533,11 @@ def plot_galaxy_map_interactive(df: pd.DataFrame, out_path: Path | None,
         width=1400, height=900,
         legend=dict(
             x=0.01, y=0.99, xanchor="left", yanchor="top",
+            groupclick="toggleitem",
             bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1,
         ),
     )
-    fig.add_layout_image(_region_layout_image_2d())
+    fig.add_trace(_region_boundary_trace_2d())
     fig.add_trace(_region_label_trace_2d())
     fig.add_trace(_landmark_trace_2d())
     if current_pos:
@@ -633,7 +606,7 @@ def _build_cube_mesh(df: pd.DataFrame):
 
     # log-scale intensity, same value for all 8 vertices of each cube
     log_counts = np.log10(df["system_count"].to_numpy().clip(min=1))
-    intensity = np.repeat(log_counts, 8)
+    intensity = np.repeat(log_counts, 8, axis=0)
 
     return (
         verts_flat[:, 0], verts_flat[:, 1], verts_flat[:, 2],
@@ -784,6 +757,7 @@ def plot_sector_map_interactive(df: pd.DataFrame, out_path: Path | None,
         font_color="white",
         width=1400, height=900,
         legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
                     bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
     )
 
@@ -873,6 +847,7 @@ def plot_species_bubble_3d(df: pd.DataFrame, species: str,
         font_color="white",
         width=1400, height=900,
         legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
                     bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
     )
 
@@ -923,7 +898,7 @@ def plot_sector_valuable_map_interactive(
     label, colorscale = _RATE_META.get(metric, ("Rate", "Plasma"))
 
     x, y, z, fi, fj, fk, _ = _build_cube_mesh(plot_df)
-    intensity = np.repeat(plot_df[metric].to_numpy(), 8)
+    intensity = np.repeat(plot_df[metric].to_numpy(), 8, axis=0)
 
     count_col  = metric.replace("_rate", "_count")
     count_vals = plot_df[count_col].to_numpy() if count_col in plot_df.columns else np.zeros(len(plot_df))
@@ -985,6 +960,7 @@ def plot_sector_valuable_map_interactive(
         font_color="white",
         width=1400, height=900,
         legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
                     bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
     )
 
@@ -995,10 +971,163 @@ def plot_sector_valuable_map_interactive(
 
 
 # ---------------------------------------------------------------------------
+# Combined sector 3D map — all rate layers in one figure with toggle buttons
+# ---------------------------------------------------------------------------
+
+def plot_sector_combined_3d(
+    df_heat: pd.DataFrame,
+    df_rates: pd.DataFrame,
+    out_path: Path | None = None,
+    current_pos: dict | None = None,
+) -> go.Figure | None:
+    """
+    Single interactive 3D figure with four toggleable data layers:
+      - Sector Heat Map (log₁₀ system count, Plasma)
+      - Terraformable Rate (per visited system, YlOrRd)
+      - Earth-like Rate (Reds)
+      - Bio-signal Rate (YlGn)
+
+    Layer buttons appear above the chart. Region boundaries and landmarks
+    are always visible.
+    """
+    if df_heat.empty and df_rates.empty:
+        return None
+
+    data_traces: list[go.Mesh3d] = []
+    layer_titles: list[str] = []
+
+    _cbar = dict(tickfont=dict(color="white"),
+                 title=dict(font=dict(color="white"), side="right"))
+
+    # Layer 0: sector heat map
+    if not df_heat.empty:
+        x, y, z, fi, fj, fk, intensity = _build_cube_mesh(df_heat)
+        custom = np.column_stack([
+            df_heat["sector"].to_numpy(),
+            df_heat["system_count"].to_numpy().astype(str),
+            df_heat["grid_cx"].to_numpy().astype(int).astype(str),
+            df_heat["grid_cy"].to_numpy().astype(int).astype(str),
+            df_heat["grid_cz"].to_numpy().astype(int).astype(str),
+        ])
+        cbar = {**_cbar, "title": {**_cbar["title"], "text": "log₁₀(systems)"}}
+        data_traces.append(go.Mesh3d(
+            x=x, y=y, z=z, i=fi, j=fj, k=fk,
+            intensity=intensity, colorscale="Plasma",
+            colorbar=cbar,
+            opacity=0.75,
+            customdata=np.repeat(custom, 8, axis=0),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Systems visited: %{customdata[1]}<br>"
+                "Grid centre: (%{customdata[2]}, %{customdata[3]}, %{customdata[4]}) ly"
+                "<extra></extra>"
+            ),
+            name="Sector Heat Map", showscale=True, flatshading=True,
+            visible=True, showlegend=True,
+        ))
+        layer_titles.append(
+            f"Elite Dangerous — Sector Heat Map  ({len(df_heat):,} sectors, 1200 ly cubes)"
+        )
+
+    # Layers 1–3: rate maps
+    _rate_layers = [
+        ("terra_rate", "Terraformable rate", "YlOrRd"),
+        ("elw_rate",   "Earth-like rate",    "Reds"),
+        ("bio_rate",   "Bio-signal rate",    "YlGn"),
+    ]
+    for metric, label, colorscale in _rate_layers:
+        if df_rates.empty or metric not in df_rates.columns:
+            continue
+        plot_df = df_rates[(df_rates["system_count"] >= 3) & (df_rates[metric] > 0)].copy()
+        if plot_df.empty:
+            continue
+        x, y, z, fi, fj, fk, _ = _build_cube_mesh(plot_df)
+        intensity_r = np.repeat(plot_df[metric].to_numpy(), 8, axis=0)
+        count_col = metric.replace("_rate", "_count")
+        count_vals = (plot_df[count_col].to_numpy()
+                      if count_col in plot_df.columns else np.zeros(len(plot_df)))
+        custom = np.column_stack([
+            plot_df["sector"].to_numpy(),
+            plot_df["system_count"].to_numpy().astype(str),
+            plot_df[metric].to_numpy().round(4).astype(str),
+            count_vals.astype(int).astype(str),
+        ])
+        cbar = {**_cbar, "title": {**_cbar["title"], "text": label}}
+        data_traces.append(go.Mesh3d(
+            x=x, y=y, z=z, i=fi, j=fj, k=fk,
+            intensity=intensity_r, colorscale=colorscale,
+            colorbar=cbar,
+            opacity=0.80,
+            customdata=np.repeat(custom, 8, axis=0),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                f"{label}: %{{customdata[2]}}<br>"
+                "Bodies: %{customdata[3]}<br>"
+                "Systems visited: %{customdata[1]}"
+                "<extra></extra>"
+            ),
+            name=label, showscale=True, flatshading=True,
+            visible="legendonly", showlegend=True,
+        ))
+        layer_titles.append(
+            f"Elite Dangerous — {label}  ({len(plot_df):,} sectors, 1200 ly cubes)"
+        )
+
+    if not data_traces:
+        return None
+
+    n_data = len(data_traces)
+    region_traces = _region_traces_3d()
+    extra = [_current_pos_trace_3d(current_pos)] if current_pos else []
+
+    all_traces = data_traces + region_traces + [_landmark_trace_3d()] + extra
+
+    fig = go.Figure(data=all_traces)
+    fig.update_layout(
+        title=dict(
+            text=layer_titles[0],
+            font=dict(color="white"),
+        ),
+        scene=dict(
+            xaxis=dict(title="X (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[50000, -50000]),
+            yaxis=dict(title="Y (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-16000, 9000]),
+            zaxis=dict(title="Z (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-24000, 76000]),
+            bgcolor="#0a0a1a",
+            aspectmode="manual",
+            aspectratio=dict(x=1, y=0.25, z=1),
+            camera=dict(
+                eye=dict(x=0.0, y=1.2, z=-1.8),
+                up=dict(x=0, y=1, z=0),
+            ),
+        ),
+        paper_bgcolor="#0a0a1a",
+        font_color="white",
+        width=1400, height=900,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
+    )
+
+    if out_path is None:
+        return fig, n_data, layer_titles
+    _write_interactive(fig, out_path)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # NSP 3D scatter map
 # ---------------------------------------------------------------------------
 
 # Hue (degrees) for each NSP category; subcategory shades vary lightness.
+_NSP_CAT_SHORT: dict[str, str] = {
+    "Lagrange Clouds":    "Clouds",
+    "Mineral Formations": "Minerals",
+    "Seed Pods":          "Pods",
+}
+
 _NSP_CATEGORY_HUES: dict[str, tuple[int, float]] = {
     # (hue_degrees, saturation)
     "Anomalies":          (35,  0.90),
@@ -1044,7 +1173,6 @@ def plot_nsp_map_3d(df_codex: pd.DataFrame,
     }
 
     traces = []
-    seen_cats: set[str] = set()
     for (cat, subcat), grp in df.groupby(["nsp_cat", "nsp_subcat"]):
         subcats = cat_subcat_order.get(cat, [subcat])
         idx = subcats.index(subcat) if subcat in subcats else 0
@@ -1052,8 +1180,8 @@ def plot_nsp_map_3d(df_codex: pd.DataFrame,
 
         sys_names = (grp["system_name"].tolist()
                      if "system_name" in grp.columns else [""] * len(grp))
-        show_title = cat not in seen_cats
-        seen_cats.add(cat)
+        cat_s = str(cat)
+        group_key = _NSP_CAT_SHORT.get(cat_s, cat_s.replace(" ", ""))
         traces.append(go.Scatter3d(
             x=grp["x"].tolist(), y=grp["y"].tolist(), z=grp["z"].tolist(),
             mode="markers",
@@ -1066,9 +1194,8 @@ def plot_nsp_map_3d(df_codex: pd.DataFrame,
                 "<extra></extra>"
             ),
             name=subcat,
-            legendgroup=cat,
-            legendgrouptitle=dict(text=cat, font=dict(color="white", size=11))
-                if show_title else None,
+            legendgroup=group_key,
+            legendgrouptitle=dict(text=group_key, font=dict(color="white", size=11)),
         ))
 
     extra = [_current_pos_trace_3d(current_pos)] if current_pos else []

@@ -1508,6 +1508,50 @@ def _plotly(fig: go.Figure | None) -> str:
     return f'<div class="plotly-wrap">{fig.to_html(full_html=False, include_plotlyjs=False)}</div>'
 
 
+def _plotly_exclusive_legend(
+    fig: go.Figure,
+    div_id: str,
+    n_exclusive: int,
+    layer_titles: list[str] | None = None,
+) -> str:
+    """Plotly figure where the first n_exclusive traces are mutually exclusive in the legend.
+
+    Clicking a data-layer entry: shows that layer, sets others to 'legendonly',
+    updates the chart title, and preserves the current visibility of all
+    non-data traces (regions, landmarks, etc.).
+    """
+    html = fig.to_html(full_html=False, include_plotlyjs=False, div_id=div_id)
+    titles_js = json.dumps(layer_titles or [])
+    js = f"""
+(function() {{
+  function init() {{
+    var gd = document.getElementById('{div_id}');
+    if (!gd || !gd.on) {{ setTimeout(init, 50); return; }}
+    var N = {n_exclusive};
+    var titles = {titles_js};
+    gd.on('plotly_legendclick', function(evt) {{
+      var c = evt.curveNumber;
+      if (typeof c !== 'number' || isNaN(c) || c < 0 || c >= N) return true;
+      var vis = gd.data.map(function(t, i) {{
+        if (i < N) return i === c ? true : 'legendonly';
+        return t.visible === undefined ? true : t.visible;
+      }});
+      Plotly.restyle(gd, 'visible', vis);
+      if (titles[c]) Plotly.relayout(gd, {{'title.text': titles[c]}});
+      return false;
+    }});
+    gd.on('plotly_legenddoubleclick', function(evt) {{
+      var c = evt.curveNumber;
+      if (typeof c !== 'number' || isNaN(c) || c < 0 || c >= N) return true;
+      return false;
+    }});
+  }}
+  init();
+}})();
+"""
+    return f'<div class="plotly-wrap">{html}<script>{js}</script></div>'
+
+
 def _summary_table_html(data: dict) -> str:
     labels = {
         "journal_files":       "Journal files processed",
@@ -3028,23 +3072,32 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     ))
 
     # ------------------------------------------------------------------
-    # Sector Map 3D
+    # Sector Map 3D — combined map with legend-based layer switching
     # ------------------------------------------------------------------
     print("  Sector map 3D...")
     df_sec = st.sector_map_data(conn)
-    sections.append(_section("sector-map", "Sector Map 3D",
-        _tab_group("sector-map", [
-            ("Interactive 3D", _plotly(mp.plot_sector_map_interactive(df_sec, None, current_pos=cur_pos))),
-        ])
-    ))
+    df_svd = st.sector_valuable_data(conn)
+    _combined = mp.plot_sector_combined_3d(df_sec, df_svd, None, current_pos=cur_pos)
+    if _combined is not None:
+        _fig_combined, _n_layers, _layer_titles = _combined
+        _sector_html = _plotly_exclusive_legend(
+            _fig_combined, "edda-sector-3d", _n_layers, _layer_titles
+        )
+    else:
+        _sector_html = '<p class="empty-note">No data available.</p>'
+    sections.append(_section("sector-map", "Sector Map 3D", _sector_html))
 
     # ------------------------------------------------------------------
-    # Valuable Regions
+    # Bodies — charts + catalogue
     # ------------------------------------------------------------------
-    print("  Valuable regions...")
-    df_svd  = st.sector_valuable_data(conn)
-    df_rz   = st.body_rate_vs_z(conn)
-    df_rsc  = st.body_rate_vs_star_class(conn)
+    print("  Bodies...")
+    df_rz          = st.body_rate_vs_z(conn)
+    df_rsc         = st.body_rate_vs_star_class(conn)
+    df_bodies      = st.body_type_counts(conn)
+    df_stars       = st.star_class_counts(conn)
+    df_bval        = st.body_values_table(conn)
+    df_boxel_val   = st.boxel_he_vs_value(conn)
+    _fig_boxel_val = ch.plot_boxel_he_vs_value(df_boxel_val, None)
 
     # Top-sectors table (≥5 systems, sorted by terra_rate)
     top_sec = df_svd[df_svd["system_count"] >= 5].head(30)
@@ -3074,33 +3127,15 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         f"<tbody>{top_sec_rows}</tbody></table></div>"
     )
 
-    sections.append(_section("valuable-regions", "Valuable Regions",
-        _tab_group("valuable-regions", [
-            ("Terra Sector Map",   _plotly(mp.plot_sector_valuable_map_interactive(df_svd, None, "terra_rate",   current_pos=cur_pos))),
-            ("ELW Sector Map",     _plotly(mp.plot_sector_valuable_map_interactive(df_svd, None, "elw_rate",    current_pos=cur_pos))),
-            ("Bio Sector Map",     _plotly(mp.plot_sector_valuable_map_interactive(df_svd, None, "bio_rate",    current_pos=cur_pos))),
-            ("Rate vs Galactic Y", _plotly(ch.plot_body_rate_vs_z_interactive(df_rz, None))),
-            ("Rate vs Star Class", _plotly(ch.plot_body_rate_vs_star_class_interactive(df_rsc, None))),
-            ("Top Sectors Table",  top_sec_html),
-        ])
-    ))
-
-    # ------------------------------------------------------------------
-    # Bodies — charts + catalogue
-    # ------------------------------------------------------------------
-    print("  Bodies...")
-    df_bodies      = st.body_type_counts(conn)
-    df_stars       = st.star_class_counts(conn)
-    df_bval        = st.body_values_table(conn)
-    df_boxel_val   = st.boxel_he_vs_value(conn)
-    _fig_boxel_val = ch.plot_boxel_he_vs_value(df_boxel_val, None)
-
     bodies_tabs = [
         ("Planet Types",       _plotly(ch.plot_body_types_interactive(df_bodies, None))),
         ("Star Classes",       _img(ch.plot_star_classes_static(df_stars, None))),
         ("Value by Type",      _plotly(ch.plot_body_values_by_type_interactive(df_bval, None))),
         ("Value Detail",       _img(ch.plot_body_values_by_type_static(df_bval, None))),
         ("Value Distribution", _img(ch.plot_body_value_histogram_static(df_bval, None))),
+        ("Rate vs Galactic Y", _plotly(ch.plot_body_rate_vs_z_interactive(df_rz, None))),
+        ("Rate vs Star Class", _plotly(ch.plot_body_rate_vs_star_class_interactive(df_rsc, None))),
+        ("Top Sectors Table",  top_sec_html),
     ]
     if _fig_boxel_val is not None:
         bodies_tabs.append(("He% vs System Value", _plotly(_fig_boxel_val)))
@@ -3253,7 +3288,6 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         ("records",           "Personal Records"),
         ("galaxy-map",        "Galaxy Maps"),
         ("sector-map",        "Sector Map 3D"),
-        ("valuable-regions",  "Valuable Regions"),
         ("bodies",            "Bodies"),
         ("exobiology",  "Exobiology"),
         ("income",      "Income & Travel"),

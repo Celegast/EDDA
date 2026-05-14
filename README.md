@@ -38,9 +38,8 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Journal importer** — incrementally processes Elite Dangerous journal files; resumes partially-imported files (e.g. when the game was open during import) without duplicating data; idempotent re-runs skip already-imported files
 - **Exploration statistics** — system counts, jump distance, first discoveries, mapping stats
 - **Trip report** — scoped statistics for a date range, useful for comparing expedition results against tools like Elite Observatory
-- **Galaxy maps** — interactive 3D Plotly maps oriented with Sol in front and Colonia to the left, scaled to true in-game galaxy dimensions; static PNG variants for density, bio signals, and first discoveries
-- **Sector heat maps** — 1200 ly cube grid coloured by system density, with an interactive 3D version
-- **Valuable regions** — rate-normalised sector maps showing ELW, Water World, terraformable, and bio-signal density per visited system; galactic-height (Y) correlation charts; star-class correlation charts
+- **Galaxy maps** — interactive 3D Plotly maps oriented with Sol in front and Colonia to the left, scaled to true in-game galaxy dimensions; static PNG variants for density, bio signals, and first discoveries; all interactive maps include a toggleable galactic-region overlay with independently switchable region boundaries and region labels
+- **Sector heat maps** — 1200 ly cube grid coloured by system density; the interactive 3D version combines four legend-toggleable data layers in a single figure: system density (heat map), terraformable rate, Earth-like rate, and bio-signal rate per visited system; switching layers updates the chart title and preserves region/landmark visibility
 - **Exobiology charts** — species distribution, value breakdown by planet type, 3D species bubble maps, and a He% vs Stratum Tectonicas probability chart (mirrors the community "Boxel Helium vs Tectonicas" chart)
 - **Boxel analytics** — He% vs average system exploration value chart; identifies He% ranges associated with high-value boxels (>3.5 MCr average)
 - **Body value catalogue** — per-body estimated exploration credit value using the Odyssey formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds; property ranges (min/avg/max with body names) and most-of-type-in-system records per planet type
@@ -264,7 +263,7 @@ Renders all analytics charts.
 pdm run charts -- [--out DIR] [--static-only] [--interactive-only] [--db PATH]
 ```
 
-Outputs include body type counts, star class counts, exploration and exobiology income over time, jump distance histogram, top species, species × planet type heat map, body value breakdowns, the valuable-regions charts (`body_rate_vs_z`, `body_rate_vs_star_class`, `sector_terra_rate`, `sector_elw_rate`), and the He% correlation charts.
+Outputs include body type counts, star class counts, exploration and exobiology income over time, jump distance histogram, top species, species × planet type heat map, body value breakdowns, rate-vs-galactic-height and rate-vs-star-class charts, and the He% correlation charts.
 
 ### `pdm run dashboard`
 
@@ -281,9 +280,8 @@ The dashboard sections:
 | Overview | Key lifetime counts and Vicinity Hints (helium-rich, Tectonicas, and high-value boxels within 5,000 ly); system names are clickable links |
 | Personal Records | Top-10 tables for most bodies, most stars, most bio signals, top exobiology value, top exploration value; Miscellaneous personal bests (gravity, temperature, radius, longest jump); body and system names are clickable links |
 | Galaxy Maps | Interactive 3D views (all systems, bio signals, first discoveries) and static PNG maps |
-| Sector Map | Interactive 3D sector cube density map |
-| Valuable Regions | Rate-normalised sector maps; body rates vs galactic height and star class; top sectors table |
-| Bodies | Planet-type and star-class charts (star classes shown in spectral colours with abbreviated labels); body value breakdown; He% vs average system value line chart |
+| Sector Map | Combined interactive 3D figure with four legend-toggleable layers: system density heat map, terraformable rate, Earth-like rate, and bio-signal rate; switching layers updates the title; region boundaries and landmarks remain visible across layer changes |
+| Bodies | Planet-type and star-class charts (star classes shown in spectral colours with abbreviated labels); body value breakdown; He% vs average system value line chart; body rates vs galactic height and star class; top sectors table |
 | Exobiology | Species scan log grouped by genus, value breakdown by species and planet type, interactive genus × planet-type heatmap with row/column totals, 3D species bubble maps, He% vs Stratum Tectonicas probability chart |
 | Income & Travel | Cumulative exploration and exobiology credits; jump distance histogram |
 | Species Catalogue | Per-genus overview panels with per-species drill-down; scan counts, first-log tracking, estimated and actual sale values; planet-type breakdown; spectral distribution chart per species and per genus |
