@@ -389,3 +389,19 @@ src/edda/
     ├── maps.py             galaxy and sector map functions
     └── dashboard.py        HTML dashboard assembler
 ```
+
+## Acknowledgements
+
+**Data sources**
+
+- [klightspeed/EliteDangerousRegionMap](https://github.com/klightspeed/EliteDangerousRegionMap) — galactic region bitmap and region name data used for the region boundary overlays on all interactive maps
+- [ED community wiki](https://elite-dangerous.fandom.com/wiki/Elite_Dangerous_Wiki)
+- **CMDR SigmaExplorer** ([IGAU — Intergalactic Astronomical Union](https://github.com/Intergalactic-Astronomical-Union/publications)) — "Boxel Helium vs Stratum Tectonicas" chart; He% probability ranges used for the Stratum Tectonicas vicinity hints and the He% correlation chart
+
+**Inspiration**
+
+- **CMDR Vithigar** and **CMDR MattG** for their work on [Elite Observatory](https://github.com/Xjph/ObservatoryCore) and its plugins, which inspired many of the analytics ideas in EDDA
+
+**Beta testing**
+
+- **CMDR BacardEsan**
