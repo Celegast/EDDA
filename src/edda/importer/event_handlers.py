@@ -13,10 +13,11 @@ from typing import Any
 # Helpers
 # ---------------------------------------------------------------------------
 
-# The game journal writes a species-variant name into genus_localised for these two genera.
+# The game journal writes a species-variant name into genus_localised for these genera.
 GENUS_LOCALISED_CORRECTIONS: dict[str, str] = {
     "$Codex_Ent_Sphere_Name;": "Anemone",
     "$Codex_Ent_Tube_Name;":   "Sinuous Tubers",
+    "$Codex_Ent_Cone_Name;":   "Bark Mounds",
 }
 
 

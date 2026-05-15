@@ -10,7 +10,7 @@ import pandas as pd
 
 SECTOR_SIZE = 1200  # ly — ED sector cube side length
 
-# The game journal writes a species-variant name into genus_localised for these two genera.
+# The game journal writes a species-variant name into genus_localised for these genera.
 # Use this snippet in any SELECT that reads genus_localised; pass the table alias prefix
 # (e.g. "sc") or empty string for unqualified column references.
 def _genus_sql(prefix: str = "") -> str:
@@ -18,7 +18,8 @@ def _genus_sql(prefix: str = "") -> str:
     return (
         f"CASE {p}genus"
         f" WHEN '$Codex_Ent_Sphere_Name;' THEN 'Anemone'"
-        f" WHEN '$Codex_Ent_Tube_Name;' THEN 'Sinuous Tubers'"
+        f" WHEN '$Codex_Ent_Tube_Name;'   THEN 'Sinuous Tubers'"
+        f" WHEN '$Codex_Ent_Cone_Name;'   THEN 'Bark Mounds'"
         f" ELSE {p}genus_localised END"
     )
 
@@ -587,6 +588,51 @@ def organic_values_table(conn: sqlite3.Connection,
             "actual_total_sold": actual_total,
         })
 
+    result = pd.DataFrame(rows)
+    bark_df = _bark_mounds_from_codex(conn)
+    if not bark_df.empty:
+        result = pd.concat([result, bark_df], ignore_index=True)
+    return result
+
+
+def _bark_mounds_from_codex(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    Bark Mounds are proximity-discovered (CodexEntry), never via ScanOrganic.
+    Pull them from codex_entries so they appear in the Species Catalogue.
+    """
+    from .valuation import organic_value, SPECIES_VALUES
+    sql = """
+        SELECT ce.timestamp,
+               ce.system_address,
+               s.name       AS system_name,
+               s.star_class,
+               ce.is_new_entry
+        FROM codex_entries ce
+        JOIN systems s ON s.system_address = ce.system_address
+        WHERE ce.name = '$Codex_Ent_Cone_Name;'
+        ORDER BY ce.timestamp
+    """
+    df = pd.read_sql_query(sql, conn)
+    if df.empty:
+        return df
+    base = SPECIES_VALUES.get("Bark Mounds", 0)
+    rows = []
+    for _, r in df.iterrows():
+        fl = bool(r["is_new_entry"])
+        rows.append({
+            "timestamp":         r["timestamp"],
+            "system_address":    r["system_address"],
+            "system_name":       r["system_name"],
+            "body_name":         None,
+            "planet_class":      None,
+            "star_class":        r["star_class"],
+            "genus":             "Bark Mounds",
+            "species":           "Bark Mounds",
+            "is_first_log":      fl,
+            "base_value":        base,
+            "estimated_payout":  organic_value("Bark Mounds", is_first_log=fl),
+            "actual_total_sold": None,
+        })
     return pd.DataFrame(rows)
 
 
