@@ -3103,30 +3103,54 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
 
     # Top-sectors table (≥5 systems, sorted by terra_rate)
     top_sec = df_svd[df_svd["system_count"] >= 5].head(30)
-    top_sec_rows = "".join(
-        f"<tr>"
-        f"<td>{r['sector']}</td>"
-        f"<td>{int(r['system_count'])}</td>"
-        f"<td>{r['terra_rate']:.3f}</td>"
-        f"<td>{int(r['terra_count'])}</td>"
-        f"<td>{r['elw_rate']:.3f}</td>"
-        f"<td>{int(r['elw_count'])}</td>"
-        f"<td>{r['ww_rate']:.3f}</td>"
-        f"<td>{int(r['ww_count'])}</td>"
-        f"<td>{r['bio_rate']:.3f}</td>"
-        f"</tr>"
-        for _, r in top_sec.iterrows()
-    )
+    dist_th = "<th>Distance</th>" if cur_pos else ""
+
+    # Per-column max for relative heat colouring (rgb matches the 3D map colorscales)
+    _rate_rgb = {
+        "terra_rate": (220,  90,  20),
+        "elw_rate":   (210,  40,  40),
+        "ww_rate":    ( 40, 100, 210),
+        "bio_rate":   ( 60, 180,  60),
+    }
+    _rate_max = {col: top_sec[col].max() for col in _rate_rgb}
+
+    def _rate_td(v: float, col: str) -> str:
+        col_max = _rate_max[col]
+        style = ""
+        if col_max > 0:
+            ri, gi, bi = _rate_rgb[col]
+            alpha = 0.65 * (v / col_max)
+            style = f' style="background-color:rgba({ri},{gi},{bi},{alpha:.2f})"'
+        return f'<td class="num" data-sort="{v:.4f}"{style}>{v:.3f}</td>'
+
+    top_sec_rows = []
+    for _, r in top_sec.iterrows():
+        d = _dist_ly(cur_pos, r["grid_cx"], r["grid_cy"], r["grid_cz"])
+        top_sec_rows.append(
+            f"<tr>"
+            f"<td>{r['sector']}</td>"
+            f'<td class="num" data-sort="{int(r["system_count"])}">{int(r["system_count"])}</td>'
+            + _rate_td(r["terra_rate"], "terra_rate")
+            + f'<td class="num" data-sort="{int(r["terra_count"])}">{int(r["terra_count"])}</td>'
+            + _rate_td(r["elw_rate"], "elw_rate")
+            + f'<td class="num" data-sort="{int(r["elw_count"])}">{int(r["elw_count"])}</td>'
+            + _rate_td(r["ww_rate"], "ww_rate")
+            + f'<td class="num" data-sort="{int(r["ww_count"])}">{int(r["ww_count"])}</td>'
+            + _rate_td(r["bio_rate"], "bio_rate")
+            + (_dist_td(d) if cur_pos else "")
+            + "</tr>"
+        )
     top_sec_html = (
-        '<p class="col-head">Top Sectors by Terraformable Rate '
+        '<p class="sub-head">Top Sectors by Terraformable Rate '
         '(≥ 5 systems visited, rates are per visited system)</p>'
-        '<div class="table-wrap"><table class="stats-table">'
-        "<thead><tr><th>Sector</th><th>Systems</th>"
+        '<div class="table-wrap">'
+        '<table class="detail-table sortable"><thead>'
+        f"<tr><th>Sector</th><th>Systems</th>"
         "<th>Terra rate</th><th>Terra #</th>"
         "<th>ELW rate</th><th>ELW #</th>"
         "<th>WW rate</th><th>WW #</th>"
-        "<th>Bio rate</th></tr></thead>"
-        f"<tbody>{top_sec_rows}</tbody></table></div>"
+        f"<th>Bio rate</th>{dist_th}</tr></thead>"
+        f'<tbody>{"".join(top_sec_rows)}</tbody></table></div>'
     )
 
     bodies_tabs = [
