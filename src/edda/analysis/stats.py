@@ -100,6 +100,11 @@ def personal_records(conn: sqlite3.Connection) -> pd.DataFrame:
          "SELECT name, system_address, radius_km AS value FROM bodies WHERE radius_km > 0 ORDER BY radius_km ASC LIMIT 1"),
         ("Most bio signals", "",
          "SELECT name, system_address, bio_signals AS value FROM bodies ORDER BY bio_signals DESC LIMIT 1"),
+        ("Largest ring",     "km",
+         "SELECT b.name, b.system_address, MAX(r.outer_rad) / 1000.0 AS value"
+         " FROM rings r JOIN bodies b ON b.system_address=r.system_address AND b.body_id=r.body_id"
+         " WHERE r.name NOT LIKE '% Belt'"
+         " GROUP BY b.system_address, b.body_id, b.name ORDER BY MAX(r.outer_rad) DESC LIMIT 1"),
         ("Longest jump",     "ly",
          "SELECT s.name, j.system_address, j.jump_dist AS value FROM jumps j JOIN systems s ON s.system_address=j.system_address ORDER BY jump_dist DESC LIMIT 1"),
     ]
@@ -468,9 +473,17 @@ def body_values_table(conn: sqlite3.Connection) -> pd.DataFrame:
                b.scanned_at,
                s.name           AS system_name,
                s.star_class,
-               s.x, s.y, s.z
+               s.x, s.y, s.z,
+               rng.ring_outer_max_km
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
+        LEFT JOIN (
+            SELECT system_address, body_id,
+                   MAX(outer_rad) / 1000.0 AS ring_outer_max_km
+            FROM rings
+            WHERE name NOT LIKE '% Belt'
+            GROUP BY system_address, body_id
+        ) rng ON rng.system_address = b.system_address AND rng.body_id = b.body_id
         WHERE b.body_type = 'Planet'
           AND b.subtype IS NOT NULL
           AND b.mass_em IS NOT NULL
@@ -847,9 +860,17 @@ def star_body_details(conn: sqlite3.Connection) -> pd.DataFrame:
         SELECT b.name, b.subtype AS star_class,
                b.mass_em, b.age_my, b.radius_km, b.surface_temp_k,
                b.first_discovered,
-               s.system_address, s.name AS system_name, s.x, s.y, s.z
+               s.system_address, s.name AS system_name, s.x, s.y, s.z,
+               rng.ring_outer_max_km
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
+        LEFT JOIN (
+            SELECT system_address, body_id,
+                   MAX(outer_rad) / 1000.0 AS ring_outer_max_km
+            FROM rings
+            WHERE name NOT LIKE '% Belt'
+            GROUP BY system_address, body_id
+        ) rng ON rng.system_address = b.system_address AND rng.body_id = b.body_id
         WHERE b.body_type = 'Star'
           AND b.subtype IS NOT NULL
     """

@@ -2692,6 +2692,7 @@ def _build_body_section(bval_df: pd.DataFrame, cur_pos: dict | None = None,
             ("radius_km",           "Radius (km)",              "{:,.0f}"),
             ("mass_em",             "Earth masses",             "{:.4f}"),
             ("surface_pressure_atm","Surface pressure (atm)",   "{:.4f}"),
+            ("ring_outer_max_km",   "Ring outer radius (km)",   "{:,.0f}"),
         ]:
             if col not in grp.columns:
                 continue
@@ -2886,10 +2887,11 @@ def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
                 sbg["radius_sr"] = sbg["radius_km"] / _SOL_R
             star_prop_rows = []
             for col, lbl, fmt in [
-                ("surface_temp_k", "Surface temperature (K)", "{:.0f}"),
-                ("radius_sr",      "Solar radius",            "{:.4f}"),
-                ("mass_em",        "Solar masses",            "{:.4f}"),
-                ("age_my",         "Age (million years)",     "{:,.0f}"),
+                ("surface_temp_k",     "Surface temperature (K)", "{:.0f}"),
+                ("radius_sr",          "Solar radius",            "{:.4f}"),
+                ("mass_em",            "Solar masses",            "{:.4f}"),
+                ("age_my",             "Age (million years)",     "{:,.0f}"),
+                ("ring_outer_max_km",  "Ring outer radius (km)",  "{:,.0f}"),
             ]:
                 if col not in sbg.columns:
                     continue
