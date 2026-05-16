@@ -713,13 +713,13 @@ KNOWN_IGNORED_EVENTS: frozenset[str] = frozenset({
     "Disembark", "Embark", "Touchdown", "Liftoff",
     "SupercruiseEntry", "SupercruiseExit", "SupercruiseDestinationDrop",
     "FuelScoop", "ApproachBody", "LeaveBody", "ApproachSettlement",
-    "LaunchSRV", "DockSRV", "SRVDestroyed",
+    "LaunchSRV", "DockSRV", "SRVDestroyed", "VehicleSwitch",
     # Ship / station interactions
     "Docked", "Undocked", "DockingGranted", "DockingDenied",
     "DockingCancelled", "DockingTimeout",
     "ShieldState", "HullDamage", "HeatWarning", "HeatDamage",
     "JetConeDamage", "JetConeBoost", "CockpitBreached",
-    "RefuelAll", "RefuelPartial", "RepairAll", "Repair", "AfmuRepairs",
+    "RefuelAll", "RefuelPartial", "RepairAll", "Repair", "AfmuRepairs", "RebootRepair",
     "BuyAmmo", "BuyDrones", "SellDrones", "Synthesis",
     "LaunchDrone", "RepairDrone", "RestockVehicle",
     "EjectCargo", "CollectCargo", "CargoTransfer",
@@ -727,7 +727,7 @@ KNOWN_IGNORED_EVENTS: frozenset[str] = frozenset({
     "ModuleBuy", "ModuleSell", "ModuleStore", "ModuleRetrieve", "ModuleSwap",
     "ModuleSellRemote", "FetchRemoteModule", "ModuleInfo", "MassModuleStore",
     "Outfitting", "Shipyard", "ShipyardBuy", "ShipyardNew", "ShipyardSwap",
-    "ShipyardTransfer", "ShipyardRedeem", "ShipRedeemed",
+    "ShipyardTransfer", "ShipyardRedeem", "ShipRedeemed", "ShipyardSell", "ShipyardBankDeposit",
     # Suits / on-foot
     "SwitchSuitLoadout", "CreateSuitLoadout", "DeleteSuitLoadout",
     "RenameSuitLoadout", "LoadoutEquipModule",
@@ -747,25 +747,30 @@ KNOWN_IGNORED_EVENTS: frozenset[str] = frozenset({
     "MiningRefined", "ProspectedAsteroid", "AsteroidCracked",
     # Trading
     "MarketBuy", "MarketSell", "Market", "CargoDepot", "SearchAndRescue",
-    # Materials / engineering
+    # Materials / engineering / research
     "MaterialTrade", "MaterialDiscovered", "TechnologyBroker",
-    "EngineerCraft", "EngineerContribution",
+    "EngineerCraft", "EngineerContribution", "ScientificResearch",
     # Missions
     "MissionAccepted", "MissionAbandoned", "MissionFailed", "MissionRedirected",
     "CommunityGoal", "CommunityGoalJoin", "CommunityGoalReward", "CommunityGoalDiscard",
     # Fleet carriers
-    "CarrierJump", "CarrierJumpRequest", "CarrierStats", "CarrierLocation",
+    "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled", "CarrierStats", "CarrierLocation",
     "CarrierTradeOrder", "CarrierDepositFuel", "CarrierFinance",
     "CarrierBankTransfer", "CarrierCrewServices", "CarrierDockingPermission",
+    "CarrierModulePack", "CarrierNameChange", "CarrierShipPack",
     "FCMaterials",
     # Powerplay
     "Powerplay", "PowerplayRank", "PowerplaySalary", "PowerplayCollect",
     "PowerplayDeliver", "PowerplayFastTrack", "PowerplayJoin", "PowerplayLeave",
-    # Social / squadrons / wings
+    # Social / crew / squadrons / wings
     "WingAdd", "WingJoin", "WingLeave", "WingInvite",
     "SquadronStartup", "SquadronPromotion", "JoinedSquadron", "InvitedToSquadron",
+    "SharedBookmarkToSquadron",
+    "ChangeCrewRole", "CrewMemberJoins", "CrewMemberQuits", "CrewMemberRoleChange",
+    "EndCrewSession", "JoinACrew", "KickCrewMember", "QuitACrew",
     # Colonisation
     "ColonisationConstructionDepot", "ColonisationContribution",
+    "ColonisationBeaconDeployed", "ColonisationSystemClaim",
     "DeliverPowerMicroResources",
     # FSS progress (body count already captured via DiscoveryScan / FSSAllBodiesFound)
     "FSSDiscoveryScan",
