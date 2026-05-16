@@ -146,6 +146,8 @@ SPECIES_VALUES: dict[str, int] = {
     "Concha Biconcavis":     19_010_800,
     "Concha Labiata":         2_352_400,
     "Concha Renibus":         4_572_400,
+    "Coral Root":             1_924_600,
+    "Coral Tree":             1_896_800,
     "Crystalline Shards":     1_628_800,
     "Electricae Pluma":       6_284_600,
     "Electricae Radialem":    6_284_600,
@@ -178,8 +180,16 @@ SPECIES_VALUES: dict[str, int] = {
     "Osseus Spiralis":        2_404_700,
     "Recepta Conditivus":    14_313_700,
     "Recepta Deltahedronix": 16_202_800,
+    "Radicoida Unica":          119_037,
     "Recepta Umbrux":        12_934_900,
     "Sinuous Tubers":         1_514_500,
+    "Thargoid Barnacle Matrix":   2_313_500,
+    "Thargoid Mega Barnacles":    2_313_500,
+    "Minor Thargoid Spire":       2_247_100,
+    "Major Thargoid Spire":       2_247_100,
+    "Primary Thargoid Spire":     2_247_100,
+    "Thargoid Spire":             2_247_100,
+    "Thargoid Spires":            2_247_100,
     "Stratum Araneamus":      2_448_900,
     "Stratum Cucumisis":     16_202_800,
     "Stratum Excutitus":      2_448_900,
@@ -232,10 +242,16 @@ def organic_value(
 
     base = SPECIES_VALUES.get(species_localised.strip(), 0)
     if base == 0:
-        # Try case-insensitive fallback
         lower = species_localised.strip().lower()
         for k, v in SPECIES_VALUES.items():
             if k.lower() == lower:
+                base = v
+                break
+    if base == 0:
+        # Suffix fallback: "Viride Brain Tree" → "Brain Tree", "Roseum Bioluminescent Anemone" → "Anemone", etc.
+        lower = species_localised.strip().lower()
+        for k, v in SPECIES_VALUES.items():
+            if lower.endswith(k.lower()):
                 base = v
                 break
 

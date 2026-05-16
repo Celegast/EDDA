@@ -397,6 +397,7 @@ src/edda/
 - [klightspeed/EliteDangerousRegionMap](https://github.com/klightspeed/EliteDangerousRegionMap) — galactic region bitmap and region name data used for the region boundary overlays on all interactive maps
 - [ED community wiki](https://elite-dangerous.fandom.com/wiki/Elite_Dangerous_Wiki)
 - **CMDR SigmaExplorer** ([IGAU — Intergalactic Astronomical Union](https://github.com/Intergalactic-Astronomical-Union/publications)) — "Boxel Helium vs Stratum Tectonicas" chart; He% probability ranges used for the Stratum Tectonicas vicinity hints and the He% correlation chart
+- [Canonn Research](https://canonn.science/)
 
 **Inspiration**
 
@@ -404,4 +405,4 @@ src/edda/
 
 **Beta testing**
 
-- **CMDR BacardEsan**
+- **[CMDR BacardEsan](https://www.twitch.tv/bacardesan)**
