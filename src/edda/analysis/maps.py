@@ -1118,6 +1118,110 @@ def plot_sector_combined_3d(
 
 
 # ---------------------------------------------------------------------------
+# High-value exobiology combined 3D map — all species as toggleable layers
+# ---------------------------------------------------------------------------
+
+# 24-color qualitative palette, visually distinct at galaxy scale
+_EXOBIO_COLORS = [
+    "#2E91E5", "#E15F99", "#1CA71C", "#FB0D0D", "#DA16FF",
+    "#B68100", "#750D86", "#EB663B", "#511CFB", "#00A08B",
+    "#FB00D1", "#FC0080", "#B2828D", "#6C7C32", "#778AAE",
+    "#862A16", "#A777F1", "#620042", "#1616A7", "#DA60CA",
+    "#6C4516", "#0D2A63", "#AF0038", "#222A2A",
+]
+
+
+def plot_exobio_combined_3d(
+    species_data: list[tuple[str, pd.DataFrame]],
+    out_path: Path | None = None,
+    current_pos: dict | None = None,
+) -> go.Figure | None:
+    """
+    Combined 3D galaxy map for high-value exobiology species.
+
+    Each species is a separate Scatter3d trace (one per layer).  The first
+    species is visible by default; the rest are legend-only so the user can
+    click legend entries to show/hide individual species.
+
+    species_data  — [(species_name, df), ...] sorted value-descending.
+                    Each df must have columns: x, y, z, system_name, scan_count.
+    """
+    species_data = [(sp, df) for sp, df in species_data if not df.empty]
+    if not species_data:
+        return None
+
+    traces: list[go.Scatter3d] = []
+    for i, (species, df) in enumerate(species_data):
+        color: str = _EXOBIO_COLORS[i % len(_EXOBIO_COLORS)]
+        visible: bool | str = True if i == 0 else "legendonly"
+        # Sort ascending so the first element (used by Plotly for the legend dot)
+        # is always the minimum size → uniform legend dots across all species.
+        df_s = df.sort_values("scan_count")
+        counts = df_s["scan_count"].to_numpy(dtype=float).clip(min=1)
+        sizes = (8 + (counts - 1) * 4).tolist()   # 1 scan→8px, 6→28px, 8→36px …
+        traces.append(go.Scatter3d(
+            x=df_s["x"].tolist(),
+            y=df_s["y"].tolist(),
+            z=df_s["z"].tolist(),
+            mode="markers",
+            marker=dict(size=sizes, color=color, opacity=0.85, line=dict(width=0)),
+            text=df_s["system_name"].tolist(),
+            customdata=df_s["scan_count"].astype(int).tolist(),
+            hovertemplate=(
+                f"<b>%{{text}}</b><br>"
+                f"{species}<br>"
+                f"Scans: %{{customdata}}<br>"
+                f"(%{{x:.1f}}, %{{y:.1f}}, %{{z:.1f}}) ly"
+                f"<extra></extra>"
+            ),
+            name=species,
+            visible=visible,
+            legendgroup="Species",
+            legendgrouptitle=(
+                dict(text="Species", font=dict(color="white", size=11)) if i == 0 else None
+            ),
+        ))
+
+    extra = [_current_pos_trace_3d(current_pos)] if current_pos else []
+    n_sp  = len(species_data)
+    n_sys = sum(len(df) for _, df in species_data)
+
+    # Species first → top of legend; regions/landmarks last → bottom of legend
+    fig = go.Figure(data=traces + _region_traces_3d() + [_landmark_trace_3d()] + extra)
+    fig.update_layout(
+        title=dict(
+            text=f"High-Value Exobiology — {n_sp} species, {n_sys:,} systems total",
+            font=dict(color="white"),
+        ),
+        scene=dict(
+            xaxis=dict(title="X (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[50000, -50000]),
+            yaxis=dict(title="Y (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-16000, 9000]),
+            zaxis=dict(title="Z (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-24000, 76000]),
+            bgcolor="#0a0a1a",
+            aspectmode="manual",
+            aspectratio=dict(x=1, y=0.25, z=1),
+            camera=dict(eye=dict(x=0.0, y=1.2, z=-1.8), up=dict(x=0, y=1, z=0)),
+        ),
+        paper_bgcolor="#0a0a1a",
+        font_color="white",
+        width=1400, height=900,
+        legend=dict(
+            x=0.01, y=0.99, xanchor="left", yanchor="top",
+            groupclick="toggleitem",
+            bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1,
+        ),
+    )
+
+    if out_path is None:
+        return fig
+    _write_interactive(fig, out_path)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # NSP 3D scatter map
 # ---------------------------------------------------------------------------
 

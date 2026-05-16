@@ -25,6 +25,7 @@ from plotly.offline import get_plotlyjs
 from . import stats as st
 from . import charts as ch
 from . import maps as mp
+from .valuation import SPECIES_VALUES
 
 
 # ---------------------------------------------------------------------------
@@ -3064,7 +3065,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     # ------------------------------------------------------------------
     print("  Galaxy maps...")
     df_sys = st.systems_for_map(conn)
-    sections.append(_section("galaxy-map", "Galaxy Maps",
+    sections.append(_section("galaxy-map", "2D Galaxy Maps",
         _tab_group("galaxy-map", [
             ("First Discoveries", _img(mp.plot_galaxy_map_static(df_sys, None, colour_by="first_discovery", current_pos=cur_pos))),
             ("Side View",         _img(mp.plot_galaxy_side_view_static(df_sys, None, current_pos=cur_pos))),
@@ -3074,7 +3075,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     ))
 
     # ------------------------------------------------------------------
-    # Sector Map 3D — combined map with legend-based layer switching
+    # 3D Galaxy Maps — tab 0: sector heat map; tab 1: high-value exobiology
     # ------------------------------------------------------------------
     print("  Sector map 3D...")
     df_sec = st.sector_map_data(conn)
@@ -3087,7 +3088,24 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         )
     else:
         _sector_html = '<p class="empty-note">No data available.</p>'
-    sections.append(_section("sector-map", "Sector Map 3D", _sector_html))
+
+    print("  Exobiology 3D map...")
+    _high_value_species = sorted(
+        [(sp, v) for sp, v in SPECIES_VALUES.items() if v > 8_000_000],
+        key=lambda x: x[1], reverse=True,
+    )
+    _exobio_3d_data = [
+        (sp, st.species_system_locations(conn, sp))
+        for sp, _ in _high_value_species
+    ]
+    _fig_exobio_3d = mp.plot_exobio_combined_3d(_exobio_3d_data, None, current_pos=cur_pos)
+
+    _3d_tabs = [("Sector Heat Map", _sector_html)]
+    if _fig_exobio_3d is not None:
+        _3d_tabs.append(("Exobiology", _plotly(_fig_exobio_3d)))
+    sections.append(_section("sector-map", "3D Galaxy Maps",
+        _tab_group("sector-map", _3d_tabs)
+    ))
 
     # ------------------------------------------------------------------
     # Bodies — charts + catalogue
@@ -3179,29 +3197,13 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     df_sxp     = st.species_by_planet_type(conn)
     df_he_tec  = st.boxel_he_vs_tectonicas(conn)
 
-    # Build bubble maps for a curated list of notable species
-    _BUBBLE_SPECIES = [
-        "Stratum Tectonicas",
-        "Stratum Cucumisis",
-        "Fonticulua Fluctus",
-        "Fonticulua Segmentatus",
-        "Concha Biconcavis",
-        "Tussock Stigmasis",
-    ]
-    bubble_tabs = []
-    for sp in _BUBBLE_SPECIES:
-        df_sp = st.species_system_locations(conn, sp)
-        if not df_sp.empty:
-            fig = mp.plot_species_bubble_3d(df_sp, sp, None, current_pos=cur_pos)
-            bubble_tabs.append((sp, _plotly(fig)))
-
     _fig_tec_he = ch.plot_tectonicas_he_distribution(df_he_tec, None)
     exobio_tabs = [
         ("Top Organisms",       _img(ch.plot_top_species_static(df_species, None))),
         ("Income by Species",   _plotly(ch.plot_organic_value_by_species_interactive(df_oval, None))),
         ("Genus × Planet Type", _plotly(ch.plot_species_planet_heatmap_interactive(df_sxp, None))),
         ("By Planet (static)",  _img(ch.plot_organic_value_by_planet_type_static(df_oval, None))),
-    ] + bubble_tabs
+    ]
     if _fig_tec_he is not None:
         exobio_tabs.append(("He% vs Tectonicas", _plotly(_fig_tec_he)))
 
@@ -3312,8 +3314,8 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     nav_items = [
         ("overview",          "Overview"),
         ("records",           "Personal Records"),
-        ("galaxy-map",        "Galaxy Maps"),
-        ("sector-map",        "Sector Map 3D"),
+        ("galaxy-map",        "2D Galaxy Maps"),
+        ("sector-map",        "3D Galaxy Maps"),
         ("bodies",            "Bodies"),
         ("exobiology",  "Exobiology"),
         ("income",      "Income & Travel"),
