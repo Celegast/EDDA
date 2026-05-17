@@ -1335,3 +1335,155 @@ def plot_nsp_map_3d(df_codex: pd.DataFrame,
         return fig
     _write_interactive(fig, out_path)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Trip route map
+# ---------------------------------------------------------------------------
+
+def plot_trip_route_3d(
+    df_route: pd.DataFrame,
+    df_systems: pd.DataFrame,
+    out_path: Path | None = None,
+) -> go.Figure | None:
+    """
+    Interactive 3D galaxy-scale route map for a trip report.
+
+    df_route   — stats.trip_route_points(): jumps in order, columns incl. x/y/z.
+                 Used for the route line and start/end markers.
+    df_systems — stats.trip_system_data(): per-system aggregates, columns:
+                 name, x, y, z, est_total, bio_signals_total, bodies_mapped.
+
+    Layers (top → bottom of legend):
+      Route            — line connecting systems in jump order
+      Est. system value — bubble size ∝ sqrt(exploration + bio value)
+      Bio signals      — bubble size ∝ signal count (only systems > 0)
+      Mapped bodies    — bubble size ∝ mapped count  (legendonly)
+      Start / End      — square markers
+      Regions          — galaxy region boundaries (legendonly)
+      Landmarks        — named landmarks
+    """
+    if df_route.empty:
+        return None
+    df_r = df_route.dropna(subset=["x", "y", "z"]).copy()
+    if df_r.empty:
+        return None
+
+    traces: list[go.Scatter3d] = []
+
+    # --- Route line ---
+    traces.append(go.Scatter3d(
+        x=df_r["x"].tolist(), y=df_r["y"].tolist(), z=df_r["z"].tolist(),
+        mode="lines",
+        line=dict(color="#4488cc", width=2),
+        name="Route",
+        hoverinfo="skip",
+    ))
+
+    # --- Bubble layers (from per-system data) ---
+    if not df_systems.empty:
+        df_s = df_systems.dropna(subset=["x", "y", "z"]).copy()
+
+        # Layer 1: Estimated system value (exploration + bio)
+        if "est_total" in df_s.columns and df_s["est_total"].sum() > 0:
+            df_v = df_s[df_s["est_total"] > 0].sort_values("est_total")
+            max_val = float(df_v["est_total"].max()) or 1.0
+            sizes_v = (4 + 16 * (df_v["est_total"] / max_val) ** 0.5).tolist()
+            val_labels = df_v["est_total"].apply(
+                lambda v: f"{v/1e6:.1f} MCr" if v >= 1e6 else f"{v/1e3:.0f} KCr"
+            ).tolist()
+            traces.append(go.Scatter3d(
+                x=df_v["x"].tolist(), y=df_v["y"].tolist(), z=df_v["z"].tolist(),
+                mode="markers",
+                marker=dict(size=sizes_v, color="#ff9944", opacity=0.80,
+                            line=dict(width=0)),
+                text=df_v["name"].tolist(),
+                customdata=val_labels,
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "Est. value: %{customdata}<extra></extra>"
+                ),
+                name="Est. system value",
+            ))
+
+        # Layer 2: Bio signals
+        if "bio_signals_total" in df_s.columns:
+            df_bio = df_s[df_s["bio_signals_total"] > 0].sort_values("bio_signals_total")
+            if not df_bio.empty:
+                sizes_bio = (5 + df_bio["bio_signals_total"].clip(upper=8) * 2).tolist()
+                traces.append(go.Scatter3d(
+                    x=df_bio["x"].tolist(), y=df_bio["y"].tolist(), z=df_bio["z"].tolist(),
+                    mode="markers",
+                    marker=dict(size=sizes_bio, color="#44dd88", opacity=0.85,
+                                line=dict(width=0)),
+                    text=df_bio["name"].tolist(),
+                    customdata=df_bio["bio_signals_total"].astype(int).tolist(),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        "Bio signals: %{customdata}<extra></extra>"
+                    ),
+                    name="Bio signals",
+                ))
+
+        # Layer 3: Mapped bodies (legendonly)
+        if "bodies_mapped" in df_s.columns:
+            df_map = df_s[df_s["bodies_mapped"] > 0].sort_values("bodies_mapped")
+            if not df_map.empty:
+                sizes_map = (5 + (df_map["bodies_mapped"].clip(upper=15) * 1.2)).tolist()
+                traces.append(go.Scatter3d(
+                    x=df_map["x"].tolist(), y=df_map["y"].tolist(), z=df_map["z"].tolist(),
+                    mode="markers",
+                    marker=dict(size=sizes_map, color="#88ccff", opacity=0.75,
+                                line=dict(width=0)),
+                    text=df_map["name"].tolist(),
+                    customdata=df_map["bodies_mapped"].astype(int).tolist(),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        "Mapped bodies: %{customdata}<extra></extra>"
+                    ),
+                    name="Mapped bodies",
+                    visible="legendonly",
+                ))
+
+    # --- Start / end markers ---
+    start, end = df_r.iloc[0], df_r.iloc[-1]
+    traces.append(go.Scatter3d(
+        x=[start["x"], end["x"]], y=[start["y"], end["y"]], z=[start["z"], end["z"]],
+        mode="markers+text",
+        marker=dict(size=8, color=["#44ff44", "#ff4444"], opacity=1.0,
+                    symbol="square", line=dict(width=0)),
+        text=[start["name"][:24], end["name"][:24]],
+        textposition=["top center", "top center"],
+        textfont=dict(size=9, color="white"),
+        name="Start / End",
+        hoverinfo="skip",
+    ))
+
+    # --- Regions + landmarks (same as other dashboard maps) ---
+    n_sys = len(df_r)
+    fig = go.Figure(data=traces + _region_traces_3d() + [_landmark_trace_3d()])
+    fig.update_layout(
+        title=dict(text=f"Route — {n_sys:,} systems", font=dict(color="white")),
+        scene=dict(
+            xaxis=dict(title="X (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[50000, -50000]),
+            yaxis=dict(title="Y (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-16000, 9000]),
+            zaxis=dict(title="Z (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[-24000, 76000]),
+            bgcolor="#0a0a1a",
+            aspectmode="manual",
+            aspectratio=dict(x=1, y=0.25, z=1),
+            camera=dict(eye=dict(x=0.0, y=1.2, z=-1.8), up=dict(x=0, y=1, z=0)),
+        ),
+        paper_bgcolor="#0a0a1a", font_color="white",
+        width=1400, height=900,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
+    )
+
+    if out_path is None:
+        return fig
+    _write_interactive(fig, out_path)
+    return None

@@ -1470,10 +1470,11 @@ def trip_personal_records(conn: sqlite3.Connection,
         row = conn.execute(sql, (lo, hi)).fetchone()
         if row and row["value"]:
             rows.append({
-                "Record":        label,
-                "Body / System": row["name"],
-                "Value":         round(float(row["value"]), 3),
-                "Unit":          unit,
+                "Record":         label,
+                "Body / System":  row["name"],
+                "system_address": row["system_address"],
+                "Value":          round(float(row["value"]), 3),
+                "Unit":           unit,
             })
     return pd.DataFrame(rows)
 
@@ -1681,10 +1682,11 @@ def trip_systems_visited(conn: sqlite3.Connection,
     """All systems jumped to during the trip, in chronological order."""
     lo, hi = _ts_bounds(date_from, date_to)
     sql = """
-        SELECT s.name, s.star_class, j.timestamp, j.jump_dist,
-               COUNT(DISTINCT b.body_id)                    AS bodies_scanned,
-               COALESCE(SUM(b.first_discovered),0)          AS first_disc,
-               COALESCE(SUM(CASE WHEN b.bio_signals>0 THEN 1 ELSE 0 END),0) AS bio_bodies
+        SELECT s.system_address, s.name, s.star_class, j.timestamp, j.jump_dist,
+               COUNT(DISTINCT b.body_id)                                     AS bodies_scanned,
+               COALESCE(SUM(b.first_discovered),0)                           AS first_disc,
+               COALESCE(SUM(CASE WHEN b.bio_signals>0 THEN 1 ELSE 0 END),0) AS bio_bodies,
+               COALESCE(SUM(b.bio_signals),0)                                AS bio_signals
         FROM jumps j
         JOIN systems s ON s.system_address = j.system_address
         LEFT JOIN bodies b ON b.system_address = j.system_address
@@ -1694,6 +1696,324 @@ def trip_systems_visited(conn: sqlite3.Connection,
         ORDER BY j.timestamp
     """
     return pd.read_sql_query(sql, conn, params=(lo, hi, lo, hi))
+
+
+def trip_route_points(conn: sqlite3.Connection,
+                      date_from: str, date_to: str) -> pd.DataFrame:
+    """
+    Systems jumped to during the trip with galactic coordinates, for the 3D route map.
+    Columns: name, star_class, x, y, z, timestamp, jump_dist,
+             bodies_scanned, first_disc, bio_bodies.
+    """
+    lo, hi = _ts_bounds(date_from, date_to)
+    sql = """
+        SELECT s.name, s.star_class, s.x, s.y, s.z,
+               j.timestamp, j.jump_dist,
+               COALESCE(COUNT(DISTINCT b.body_id), 0)                               AS bodies_scanned,
+               COALESCE(SUM(b.first_discovered), 0)                                 AS first_disc,
+               COALESCE(SUM(CASE WHEN b.bio_signals > 0 THEN 1 ELSE 0 END), 0)     AS bio_bodies
+        FROM jumps j
+        JOIN systems s ON s.system_address = j.system_address
+        LEFT JOIN bodies b ON b.system_address = j.system_address
+                           AND b.scanned_at >= ? AND b.scanned_at <= ?
+        WHERE j.timestamp >= ? AND j.timestamp <= ?
+          AND s.x IS NOT NULL
+        GROUP BY j.id
+        ORDER BY j.timestamp
+    """
+    return pd.read_sql_query(sql, conn, params=(lo, hi, lo, hi))
+
+
+def infer_powerplay_bonuses(conn: sqlite3.Connection) -> dict:
+    """
+    Infer the active power and applicable bonuses from the most recent
+    powerplay_merits entry.
+
+    Returns a dict with:
+        power        — power name string, or None if no data
+        rank         — merit rank (1-100), or 0
+        total_merits — raw merit total, or 0
+        exobio_bonus — exobiology sell-bonus fraction (e.g. 0.15 for +15%)
+        expl_bonus   — cartographic sell-bonus fraction (e.g. 0.50 for +50%)
+    """
+    from .valuation import merit_rank, antal_exobio_bonus, lyr_expl_bonus
+    row = conn.execute(
+        "SELECT power, total_merits FROM powerplay_merits ORDER BY timestamp DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return {"power": None, "rank": 0, "total_merits": 0,
+                "exobio_bonus": 0.0, "expl_bonus": 0.0}
+    power, total_merits = row[0], int(row[1] or 0)
+    rank = merit_rank(total_merits)
+    exobio = antal_exobio_bonus(total_merits) if power == "Pranav Antal" else 0.0
+    expl   = lyr_expl_bonus(total_merits)     if power == "Li Yong-Rui"  else 0.0
+    return {"power": power, "rank": rank, "total_merits": total_merits,
+            "exobio_bonus": exobio, "expl_bonus": expl}
+
+
+def trip_value_timeline(conn: sqlite3.Connection,
+                        date_from: str, date_to: str,
+                        exobio_bonus: float = 0.0,
+                        expl_bonus: float = 0.0) -> pd.DataFrame:
+    """
+    Estimated credit value earned per day during the trip.
+    Combines exploration (body scan) and exobiology (first-log ×5) values.
+    Columns: day, exploration, exobiology, total, cumulative.
+    """
+    from .valuation import body_scan_value, SPECIES_VALUES
+    lo, hi = _ts_bounds(date_from, date_to)
+
+    body_sql = """
+        SELECT scanned_at AS ts, subtype, mass_em, terraform_state,
+               first_discovered, was_mapped, first_mapped
+        FROM bodies
+        WHERE body_type = 'Planet' AND subtype IS NOT NULL AND mass_em IS NOT NULL
+          AND scanned_at >= ? AND scanned_at <= ?
+    """
+    df_b = pd.read_sql_query(body_sql, conn, params=(lo, hi))
+
+    org_sql = """
+        SELECT timestamp AS ts, species_localised
+        FROM organic_scans
+        WHERE scan_state = 'Analyse'
+          AND timestamp >= ? AND timestamp <= ?
+          AND species_localised IS NOT NULL AND species_localised != ''
+    """
+    df_o = pd.read_sql_query(org_sql, conn, params=(lo, hi))
+
+    bio_mult  = 5.0 * (1 + exobio_bonus)
+    expl_mult = 1.0 + expl_bonus
+
+    events: list[tuple] = []
+    for _, r in df_b.iterrows():
+        v = body_scan_value(
+            str(r["subtype"]), float(r["mass_em"]),
+            r.get("terraform_state"),
+            bool(r["first_discovered"]), bool(r["was_mapped"]), bool(r["first_mapped"]),
+        ) * expl_mult
+        if v:
+            events.append((r["ts"], v, 0))
+    for _, r in df_o.iterrows():
+        base = SPECIES_VALUES.get(str(r["species_localised"]), 0)
+        v = base * bio_mult
+        if v:
+            events.append((r["ts"], 0, v))
+
+    if not events:
+        return pd.DataFrame(columns=["day", "exploration", "exobiology",
+                                      "total", "cumulative", "session_hours", "cr_per_hour"])
+
+    df_ev = pd.DataFrame(events, columns=["ts", "exploration", "exobiology"])
+    df_ev["ts"] = pd.to_datetime(df_ev["ts"])
+    df_ev = df_ev.sort_values("ts").set_index("ts")
+    daily = df_ev.resample("D").sum().reset_index().rename(columns={"ts": "day"})
+    daily["total"] = daily["exploration"] + daily["exobiology"]
+    daily["cumulative"] = daily["total"].cumsum()
+
+    # Active session hours per day via gap detection.
+    # A new session starts whenever consecutive events are > 30 min apart.
+    # Each session gets a 10-min tail buffer to account for activity after
+    # the last logged event (e.g. flying to the next system).
+    _IDLE_GAP = pd.Timedelta(minutes=30)
+    _TAIL     = pd.Timedelta(minutes=10)
+
+    all_events_sql = """
+        SELECT timestamp AS ts FROM jumps
+         WHERE timestamp >= ? AND timestamp <= ?
+        UNION ALL
+        SELECT scanned_at AS ts FROM bodies
+         WHERE scanned_at >= ? AND scanned_at <= ?
+        UNION ALL
+        SELECT timestamp AS ts FROM organic_scans
+         WHERE scan_state = 'Analyse' AND timestamp >= ? AND timestamp <= ?
+    """
+    df_all = pd.read_sql_query(all_events_sql, conn,
+                               params=(lo, hi, lo, hi, lo, hi))
+    df_all["ts"] = pd.to_datetime(df_all["ts"])
+    df_all = df_all.sort_values("ts").reset_index(drop=True)
+    df_all["date"] = df_all["ts"].dt.strftime("%Y-%m-%d")
+
+    session_hours_map: dict[str, float] = {}
+    for date, grp in df_all.groupby("date"):
+        times = grp["ts"].tolist()
+        total = pd.Timedelta(0)
+        t0 = times[0]
+        prev = times[0]
+        for t in times[1:]:
+            if t - prev > _IDLE_GAP:
+                total += (prev - t0) + _TAIL
+                t0 = t
+            prev = t
+        total += (prev - t0) + _TAIL
+        session_hours_map[str(date)] = max(total.total_seconds() / 3600, 1 / 60)
+
+    daily["_d"] = daily["day"].dt.strftime("%Y-%m-%d")
+    daily["session_hours"] = daily["_d"].map(session_hours_map).fillna(1 / 60)
+    daily = daily.drop(columns="_d")
+    daily["cr_per_hour"] = daily["total"] / daily["session_hours"]
+    return daily
+
+
+def trip_system_data(conn: sqlite3.Connection,
+                     date_from: str, date_to: str,
+                     exobio_bonus: float = 0.0,
+                     expl_bonus: float = 0.0) -> pd.DataFrame:
+    """
+    Per-system aggregated data for the trip route map bubble layers.
+
+    Columns: name, x, y, z, est_exploration, est_bio, est_total,
+             bio_signals_total, bodies_mapped.
+
+    est_exploration — sum of body_scan_value() × (1+expl_bonus) for all planets scanned
+    est_bio         — sum of base SPECIES_VALUES × 5 × (1+exobio_bonus)
+    bio_signals_total — total bio-signal count across all bodies in system
+    bodies_mapped   — count of mapped bodies
+    """
+    from .valuation import body_scan_value, SPECIES_VALUES
+    lo, hi = _ts_bounds(date_from, date_to)
+
+    body_sql = """
+        SELECT b.system_address, s.name, s.x, s.y, s.z,
+               b.subtype, b.mass_em, b.terraform_state,
+               b.first_discovered, b.was_mapped, b.first_mapped,
+               COALESCE(b.bio_signals, 0) AS bio_signals
+        FROM bodies b
+        JOIN systems s ON s.system_address = b.system_address
+        WHERE b.body_type = 'Planet'
+          AND b.subtype IS NOT NULL AND b.mass_em IS NOT NULL
+          AND b.scanned_at >= ? AND b.scanned_at <= ?
+          AND s.x IS NOT NULL
+    """
+    df_b = pd.read_sql_query(body_sql, conn, params=(lo, hi))
+
+    expl_mult = 1.0 + expl_bonus
+    bio_mult  = 5.0 * (1 + exobio_bonus)
+
+    _empty = pd.DataFrame(columns=["name", "x", "y", "z",
+                                    "est_exploration", "est_bio", "est_total",
+                                    "bio_signals_total", "bodies_mapped"])
+    if df_b.empty:
+        return _empty
+
+    df_b["expl_val"] = df_b.apply(lambda r: body_scan_value(
+        str(r["subtype"]), float(r["mass_em"]), r.get("terraform_state"),
+        bool(r["first_discovered"]), bool(r["was_mapped"]), bool(r["first_mapped"]),
+    ) * expl_mult, axis=1)
+
+    result = (
+        df_b.groupby(["system_address", "name", "x", "y", "z"])
+        .agg(
+            est_exploration=("expl_val",    "sum"),
+            bio_signals_total=("bio_signals", "sum"),
+            bodies_mapped=("was_mapped",   "sum"),
+        )
+        .reset_index()
+    )
+
+    # Organic scan base values per system
+    org_sql = """
+        SELECT sc.system_address, sc.species_localised
+        FROM organic_scans sc
+        WHERE sc.scan_state = 'Analyse'
+          AND sc.timestamp >= ? AND sc.timestamp <= ?
+          AND sc.species_localised IS NOT NULL AND sc.species_localised != ''
+    """
+    df_o = pd.read_sql_query(org_sql, conn, params=(lo, hi))
+
+    if not df_o.empty:
+        df_o["bio_val"] = df_o["species_localised"].map(
+            lambda sp: SPECIES_VALUES.get(str(sp), 0) * bio_mult
+        )
+        bio_by_sys = (
+            df_o.groupby("system_address")["bio_val"].sum()
+            .reset_index().rename(columns={"bio_val": "est_bio"})
+        )
+        result = result.merge(bio_by_sys, on="system_address", how="left")
+        result["est_bio"] = result["est_bio"].fillna(0).astype(int)
+    else:
+        result["est_bio"] = 0
+
+    result["est_total"] = result["est_exploration"] + result["est_bio"]
+    return result.drop(columns="system_address")
+
+
+def trip_system_diagram_data(conn: sqlite3.Connection,
+                              date_from: str, date_to: str) -> dict:
+    """
+    Body data for systems visited during the trip, keyed by system_address (string).
+    Same format as system_diagram_data() but filtered to the date range.
+    """
+    lo, hi = _ts_bounds(date_from, date_to)
+
+    sys_sql = """
+        SELECT DISTINCT s.system_address, s.name, s.star_class, s.x, s.z
+        FROM jumps j
+        JOIN systems s ON s.system_address = j.system_address
+        WHERE j.timestamp >= ? AND j.timestamp <= ?
+        ORDER BY s.name
+    """
+    systems = conn.execute(sys_sql, (lo, hi)).fetchall()
+    if not systems:
+        return {}
+
+    result = {str(r[0]): {"name": r[1], "sc": r[2] or "",
+                           "x": r[3], "z": r[4], "bodies": []}
+              for r in systems}
+    sa_list = list(result.keys())
+
+    placeholders = ",".join("?" * len(sa_list))
+    bodies_sql = f"""
+        SELECT b.system_address, b.body_id, b.name, b.body_type, b.subtype,
+               b.distance_ls, b.bio_signals, b.geo_signals,
+               b.was_mapped, b.first_discovered, b.radius_km,
+               b.surface_temp_k, b.is_landable, b.terraform_state,
+               b.orbital_parent_id, b.parent_star_id,
+               (SELECT COUNT(*) FROM rings r
+                WHERE r.system_address = b.system_address AND r.body_id = b.body_id
+                  AND r.name NOT LIKE '% Belt') AS ring_count
+        FROM bodies b
+        WHERE b.system_address IN ({placeholders})
+        ORDER BY b.system_address, COALESCE(b.distance_ls, 99999)
+    """
+    for r in conn.execute(bodies_sql, sa_list).fetchall():
+        sa_str = str(r[0])
+        if sa_str not in result:
+            continue
+        tf = (r[13] or "").strip().lower()
+        result[sa_str]["bodies"].append({
+            "i": r[1], "n": r[2], "t": r[3], "s": r[4] or "",
+            "d": round(r[5], 2) if r[5] is not None else None,
+            "b": r[6] or 0, "g": r[7] or 0,
+            "w": r[8] or 0, "f": r[9] or 0,
+            "r": round(r[10]) if r[10] else None,
+            "k": round(r[11]) if r[11] else None,
+            "l": r[12] or 0,
+            "e": 1 if tf and tf not in ("", "not terraformable") else 0,
+            "p": r[14], "q": r[15], "ri": r[16] or 0,
+        })
+
+    species_sql = f"""
+        SELECT system_address, body_id, species_localised
+        FROM organic_scans
+        WHERE scan_state = 'Analyse' AND species_localised IS NOT NULL
+          AND system_address IN ({placeholders})
+        ORDER BY system_address, body_id, species_localised
+    """
+    species_map: dict[tuple, list] = {}
+    for r in conn.execute(species_sql, sa_list).fetchall():
+        key = (str(r[0]), r[1])
+        if key not in species_map:
+            species_map[key] = []
+        if r[2] not in species_map[key]:
+            species_map[key].append(r[2])
+
+    for sa_str, sys_dict in result.items():
+        for body in sys_dict["bodies"]:
+            sp = species_map.get((sa_str, body["i"]))
+            if sp:
+                body["sp"] = sp
+
+    return result
 
 
 # ---------------------------------------------------------------------------

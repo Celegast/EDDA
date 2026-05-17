@@ -220,9 +220,51 @@ SPECIES_VALUES: dict[str, int] = {
     "Tussock Virgam":        14_313_700,
 }
 
-# Pranav Antal power bonus on exobiology sales (applied when selling in Antal space).
-# Base pledge rank: +30%.  Note: does NOT apply to cartography data.
+# Pranav Antal maximum exobiology bonus (rank 94+).  Kept for legacy reference.
 ANTAL_EXOBIO_BONUS = 0.30
+
+# ---------------------------------------------------------------------------
+# Powerplay 2.0 merit-rank bonus tables
+# ---------------------------------------------------------------------------
+
+# Merit totals required to reach each rank.
+# Rank 1-4 have irregular thresholds; rank 5+ follow 15000 + (rank-5)*8000.
+def merit_rank(total_merits: int) -> int:
+    """Convert total accumulated merits to Powerplay 2.0 rank (1-100)."""
+    if total_merits < 2_000:  return 1
+    if total_merits < 5_000:  return 2
+    if total_merits < 9_000:  return 3
+    if total_merits < 15_000: return 4
+    return min(100, (total_merits + 25_000) // 8_000)
+
+
+# (min_rank, bonus_fraction) — checked highest-first
+_ANTAL_EXOBIO_STEPS: list[tuple[int, float]] = [
+    (94, 0.30), (78, 0.25), (52, 0.20), (42, 0.15), (24, 0.10),
+]
+
+_LYR_EXPL_STEPS: list[tuple[int, float]] = [
+    (86, 1.00), (73, 0.90), (67, 0.80), (55, 0.70), (48, 0.60),
+    (32, 0.50), (22, 0.40), (14, 0.30), (5, 0.20),
+]
+
+
+def antal_exobio_bonus(total_merits: int) -> float:
+    """Exobiology sell-bonus fraction for Pranav Antal at the given merit total."""
+    rank = merit_rank(total_merits)
+    for threshold, bonus in _ANTAL_EXOBIO_STEPS:
+        if rank >= threshold:
+            return bonus
+    return 0.0
+
+
+def lyr_expl_bonus(total_merits: int) -> float:
+    """Cartographic/exploration sell-bonus fraction for Li Yong-Rui at the given merit total."""
+    rank = merit_rank(total_merits)
+    for threshold, bonus in _LYR_EXPL_STEPS:
+        if rank >= threshold:
+            return bonus
+    return 0.0
 
 
 def organic_value(

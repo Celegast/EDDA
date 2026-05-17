@@ -19,6 +19,7 @@ from .analysis import stats as st
 from .analysis import maps as mp
 from .analysis import charts as ch
 from .analysis import dashboard as db
+from .analysis import trip_report as tr
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +160,10 @@ def cmd_trip(argv: list[str] | None = None) -> None:
         "--systems", action="store_true",
         help="Print the full chronological list of systems visited.",
     )
+    parser.add_argument(
+        "--html", dest="html_out", metavar="PATH", type=Path, default=None,
+        help="Write a self-contained HTML report to PATH instead of (or in addition to) the terminal output.",
+    )
     args = parser.parse_args(argv)
 
     conn = open_db(args.db)
@@ -256,6 +261,10 @@ def cmd_trip(argv: list[str] | None = None) -> None:
                           f"{b:>6} {fd:>4} {bio:>3}")
             else:
                 print("  (no jumps in this range)")
+
+        if args.html_out:
+            print(f"\nBuilding HTML report...")
+            tr.build_trip_report(conn, args.date_from, args.date_to, args.html_out)
 
         print()
     finally:

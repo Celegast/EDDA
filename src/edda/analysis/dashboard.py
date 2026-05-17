@@ -482,6 +482,7 @@ section h2 {
     text-underline-offset: 2px;
 }
 .sys-link:hover { color: #bbddff; }
+/* END_SYS_MODAL_CSS */
 """
 
 
@@ -1403,8 +1404,37 @@ function _drawSys() {
         var link = e.target.closest('.sys-link');
         if (link && link.dataset.sa) openSysModal(link.dataset.sa, link.textContent.trim());
     });
+// END_SYS_DIAGRAM
 }());
 """
+
+
+# Extracted sub-sections for reuse in the trip report
+_SYS_MODAL_CSS = _CSS[_CSS.index("/* ---- System diagram modal"):
+                       _CSS.index("/* END_SYS_MODAL_CSS */")]
+
+_SYS_MODAL_JS = _JS[_JS.index("// ---- System Diagram ----"):
+                     _JS.index("// END_SYS_DIAGRAM")]
+
+_SYS_MODAL_HTML = """\
+<div id="sys-modal" class="sys-modal">
+  <div class="sys-modal-bg" id="sys-modal-bg"></div>
+  <div class="sys-modal-box">
+    <div class="sys-modal-hdr">
+      <span id="sys-modal-ttl" class="sys-modal-ttl">–</span>
+      <span id="sys-modal-sc"  class="sys-modal-sc"></span>
+      <button class="sys-modal-close" id="sys-modal-close">✕</button>
+    </div>
+    <div id="sys-canvas-wrap" style="position:relative;overflow-y:auto;max-height:calc(92vh - 160px);overflow-x:auto">
+      <canvas id="sys-canvas" width="700" height="460"></canvas>
+      <div id="sys-tip" class="sys-tip"></div>
+    </div>
+    <div class="sys-modal-ftr">
+      <canvas id="sys-legend-canvas" width="224" height="130"></canvas>
+      <canvas id="gal-canvas" width="280" height="130"></canvas>
+    </div>
+  </div>
+</div>"""
 
 
 # ---------------------------------------------------------------------------

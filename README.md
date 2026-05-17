@@ -37,7 +37,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 - **Journal importer** — incrementally processes Elite Dangerous journal files; resumes partially-imported files (e.g. when the game was open during import) without duplicating data; idempotent re-runs skip already-imported files
 - **Exploration statistics** — system counts, jump distance, first discoveries, mapping stats
-- **Trip report** — scoped statistics for a date range, useful for comparing expedition results against tools like Elite Observatory
+- **Trip report** — scoped statistics for a date range with optional self-contained HTML report; includes daily earnings chart, Cr/active-hour chart with rolling average, sortable tables, interactive 3D route map, and clickable system-map links; Powerplay bonuses (Antal exobiology, Li Yong-Rui exploration) are applied automatically from the most recent merit record in the database
 - **Galaxy maps** — interactive 3D Plotly maps oriented with Sol in front and Colonia to the left, scaled to true in-game galaxy dimensions; static PNG variants for density, bio signals, and first discoveries; all interactive maps include a toggleable galactic-region overlay with independently switchable region boundaries and region labels
 - **Sector heat maps** — 1200 ly cube grid coloured by system density; the interactive 3D version combines four legend-toggleable data layers in a single figure: system density (heat map), terraformable rate, Earth-like rate, and bio-signal rate per visited system; switching layers updates the chart title and preserves region/landmark visibility
 - **Exobiology charts** — species distribution, value breakdown by planet type, 3D species bubble maps, and a He% vs Stratum Tectonicas probability chart (mirrors the community "Boxel Helium vs Tectonicas" chart)
@@ -221,16 +221,32 @@ pdm run stats -- [--db PATH]
 Prints statistics scoped to a date range — useful for expedition reports.
 
 ```
-pdm run trip -- --from YYYY-MM-DD --to YYYY-MM-DD [--systems] [--db PATH]
+pdm run trip -- --from YYYY-MM-DD --to YYYY-MM-DD [--systems] [--html PATH] [--db PATH]
 ```
 
-Outputs:
+`--from` and `--to` accept either `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` for sub-day precision.
+
+Terminal output:
 - Jump and system counts, light-years travelled
 - Exobiology samples with base / first-log / Antal-bonus value estimates
 - Planet-type breakdown with first-discovery and first-mapped counts
 - Estimated exploration credit value for the period
 - Personal bests within the range
 - `--systems`: full chronological list of every system visited
+
+#### HTML report (`--html PATH`)
+
+Produces a self-contained HTML file with:
+
+- **Overview cards** — total estimated exploration value (with Li Yong-Rui bonus if applicable), total estimated exobiology value (with Antal bonus), sold exploration credits, and sold exobiology credits; Powerplay bonuses are applied automatically from the most recent `powerplay_merits` record in the database and displayed as a badge in the page header
+- **Daily earnings chart** — stacked bars (exploration + exobiology) per day with a cumulative total line; subtitle shows the overall trip total
+- **Cr / active hour chart** — per-day earnings divided by detected active play time (sessions separated by gaps > 30 minutes, with a 10-minute tail buffer each), a 3-day rolling mean, and a dotted horizontal line at the overall average
+- **Exobiology samples table** — sortable; columns: Qty, Species, Base Value (per scan), With first-log (×5), Total (incl. any Powerplay bonus); grand-total footer row
+- **Systems visited table** — sortable; every system in visit order with star class, body count, bio bodies, bio signals, first-discovery count, mapped count, and estimated value; clickable system names open the interactive system-map modal
+- **Planet-type breakdown table** — sortable by type, count, first-discovered, first-mapped, or value
+- **Personal bests table** — highest/lowest gravity, hottest/coldest surface, largest/smallest radius, longest jump, largest ring; body and system names are clickable links
+- **Interactive 3D route map** — all visited systems plotted in true galactic coordinates, coloured by estimated system value; click any point to open the system-map modal
+- **System map modal** — same interactive canvas diagram as the main dashboard; shows the full body hierarchy with tooltips, first-discovery badges, bio species, ring details, and a galaxy minimap
 
 ### `pdm run map`
 
@@ -387,7 +403,8 @@ src/edda/
     ├── stats.py            SQL queries and DataFrame transformations
     ├── charts.py           matplotlib and Plotly chart functions
     ├── maps.py             galaxy and sector map functions
-    └── dashboard.py        HTML dashboard assembler
+    ├── dashboard.py        HTML dashboard assembler
+    └── trip_report.py      self-contained HTML trip report builder
 ```
 
 ## Acknowledgements
