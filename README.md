@@ -305,6 +305,19 @@ The dashboard sections:
 | Star-class Catalogue | Stars grouped by type; per-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
 | Notable Stellar Phenomena | Overview counts; interactive 3D galaxy map with colour-coded markers (category hue, subcategory lightness); FSS Detections table with catalogued NSP types as coloured tags; per-category and per-subcategory drill-down panels with new-codex-entry tracking and decoded galactic region names |
 
+## 3D Map Navigation
+
+All interactive 3D maps (3D Galaxy Maps, NSP Map, and the trip report route map) use Plotly's 3D scene controls:
+
+| Action | Control |
+|---|---|
+| Rotate | Left-click drag |
+| Pan | Right-click drag (or Ctrl + drag) |
+| Zoom | Scroll wheel |
+| Reset view | Hover chart → click ⌂ in the modebar (top-right toolbar) |
+
+A reminder is shown below each 3D chart in the page.
+
 ## System Map
 
 Clicking any system name in the dashboard opens a modal with an interactive system diagram rendered on an HTML5 canvas. The diagram shows all scanned bodies arranged in a hierarchical tree:

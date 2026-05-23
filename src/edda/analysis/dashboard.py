@@ -239,6 +239,15 @@ section h2 {
     border: 1px solid #1e1e44;
 }
 .empty-note { color: #445566; font-style: italic; padding: 20px 0; }
+.map-nav-hint {
+    font-size: 0.72rem; color: #3a4a60; margin-top: 6px; padding: 0 2px;
+    user-select: none;
+}
+.map-nav-hint kbd {
+    display: inline-block; padding: 0 5px; border: 1px solid #222844;
+    border-radius: 3px; font-size: 0.9em; background: #0c0c22; color: #5a6888;
+    font-family: inherit;
+}
 
 /* ---- Detail layout (catalogues) ---- */
 .detail-layout {
@@ -1539,6 +1548,16 @@ def _plotly(fig: go.Figure | None) -> str:
     return f'<div class="plotly-wrap">{fig.to_html(full_html=False, include_plotlyjs=False)}</div>'
 
 
+_3D_NAV_HINT = (
+    '<p class="map-nav-hint">'
+    '<kbd>drag</kbd> rotate &nbsp;·&nbsp;'
+    '<kbd>right-drag</kbd> pan &nbsp;·&nbsp;'
+    '<kbd>scroll</kbd> zoom &nbsp;·&nbsp;'
+    'reset: hover chart → ⌂ in toolbar'
+    '</p>'
+)
+
+
 def _plotly_exclusive_legend(
     fig: go.Figure,
     div_id: str,
@@ -2596,7 +2615,7 @@ def _build_nsp_section(df_det: "pd.DataFrame", df_codex: "pd.DataFrame",
     # Galaxy map (needs nsp_cat / nsp_subcat columns)
     map_fig = mp.plot_nsp_map_3d(df if not df.empty else df_codex,
                                   current_pos=cur_pos)
-    map_html = (_plotly(map_fig) if map_fig is not None
+    map_html = (_plotly(map_fig) + _3D_NAV_HINT if map_fig is not None
                 else '<p class="empty-note">No codex data for map.</p>')
 
     overview_panel_id = "nsp-overview"
@@ -3134,7 +3153,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     if _fig_exobio_3d is not None:
         _3d_tabs.append(("Exobiology", _plotly(_fig_exobio_3d)))
     sections.append(_section("sector-map", "3D Galaxy Maps",
-        _tab_group("sector-map", _3d_tabs)
+        _tab_group("sector-map", _3d_tabs) + _3D_NAV_HINT
     ))
 
     # ------------------------------------------------------------------

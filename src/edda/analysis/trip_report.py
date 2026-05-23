@@ -373,6 +373,15 @@ tr.total-row td { background: #111133; font-weight: 600; color: #aabbee;
 /* plotly chart containers */
 .chart-wrap { background: #0a0a1a; border-radius: 6px;
               border: 1px solid #1a1a33; overflow: hidden; }
+.map-nav-hint {
+  font-size: 0.72rem; color: #3a4a60; margin-top: 6px; padding: 0 2px;
+  user-select: none;
+}
+.map-nav-hint kbd {
+  display: inline-block; padding: 0 5px; border: 1px solid #1a2040;
+  border-radius: 3px; font-size: 0.9em; background: #0c0c22; color: #5a6888;
+  font-family: inherit;
+}
 """
 
 
@@ -556,9 +565,18 @@ def build_trip_report(
         f'</div>'
     )
 
+    _3d_nav_hint = (
+        '<p class="map-nav-hint">'
+        '<kbd>drag</kbd> rotate &nbsp;·&nbsp;'
+        '<kbd>right-drag</kbd> pan &nbsp;·&nbsp;'
+        '<kbd>scroll</kbd> zoom &nbsp;·&nbsp;'
+        'reset: hover chart → ⌂ in toolbar'
+        '</p>'
+    )
+
     sections = [
         _section("Overview", _overview_cards(data) + value_summary),
-        _section("3D Route", _chart(fig_route)),
+        _section("3D Route", _chart(fig_route) + (_3d_nav_hint if fig_route else "")),
         _section("Earnings per Day", _chart(fig_tl)),
         _section("Exobiology Samples", _exobio_table(est, exobio_bonus=exobio_bonus)),
         _section("Planet Types", _planet_table(bodies)),
