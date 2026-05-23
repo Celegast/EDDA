@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .event_handlers import HANDLERS, KNOWN_IGNORED_EVENTS
+from .event_handlers import HANDLERS, KNOWN_IGNORED_EVENTS, backfill_regions
 
 
 ED_JOURNAL_DIR = (
@@ -183,6 +183,8 @@ def run_import(conn: sqlite3.Connection,
 
         if verbose:
             print(f"{count} events")
+
+    backfill_regions(conn, verbose=verbose)
 
     if verbose:
         print(

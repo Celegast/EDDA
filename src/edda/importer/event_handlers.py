@@ -13,6 +13,60 @@ from typing import Any
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Region bitmap constants — same coordinate system as analysis/maps.py
+_REG_X0    = -49985.0
+_REG_Z0    = -24105.0
+_REG_PX_SZ = 4096.0 / 83
+
+_region_rle_cache:   list | None = None
+_region_names_cache: list | None = None
+
+
+def _region_for_coords(x: float, z: float) -> str | None:
+    global _region_rle_cache, _region_names_cache
+    if _region_rle_cache is None:
+        from ..analysis._region_map_data import regionmap, regions
+        _region_rle_cache   = regionmap
+        _region_names_cache = regions
+    px = int((x - _REG_X0) / _REG_PX_SZ)
+    pz = int((z - _REG_Z0) / _REG_PX_SZ)
+    if not (0 <= px < 2048 and 0 <= pz < 2048):
+        return None
+    col = 0
+    for length, rid in _region_rle_cache[pz]:
+        col += length
+        if col > px:
+            names = _region_names_cache
+            return names[rid] if rid and rid < len(names) else None
+    return None
+
+
+def backfill_regions(conn: sqlite3.Connection, verbose: bool = True) -> int:
+    """Fill systems.region for rows where coordinates are known but region is NULL."""
+    rows = conn.execute(
+        "SELECT system_address, x, z FROM systems"
+        " WHERE region IS NULL AND x IS NOT NULL AND z IS NOT NULL"
+    ).fetchall()
+    if not rows:
+        return 0
+    if verbose:
+        print(f"Backfilling region for {len(rows):,} systems...")
+    updated = 0
+    conn.execute("BEGIN")
+    for row in rows:
+        region = _region_for_coords(row["x"], row["z"])
+        if region:
+            conn.execute(
+                "UPDATE systems SET region = ? WHERE system_address = ?",
+                (region, row["system_address"]),
+            )
+            updated += 1
+    conn.execute("COMMIT")
+    if verbose:
+        print(f"  {updated:,} systems assigned a region.")
+    return updated
+
+
 # The game journal writes a species-variant name into genus_localised for these genera.
 GENUS_LOCALISED_CORRECTIONS: dict[str, str] = {
     "$Codex_Ent_Sphere_Name;": "Anemone",
@@ -41,22 +95,25 @@ def handle_fsd_jump(event: dict, conn: sqlite3.Connection) -> None:
     sa = event.get("SystemAddress")
     if not sa:
         return
+    star_pos = event.get("StarPos", [None, None, None])
+    x, y, z = star_pos[0], star_pos[1], star_pos[2]
+    region = _region_for_coords(x, z) if x is not None and z is not None else None
     conn.execute("""
-        INSERT INTO systems (system_address, name, x, y, z, star_class, first_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO systems (system_address, name, x, y, z, star_class, region, first_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(system_address) DO UPDATE SET
             name       = excluded.name,
             x          = excluded.x,
             y          = excluded.y,
             z          = excluded.z,
-            star_class = COALESCE(excluded.star_class, systems.star_class)
+            star_class = COALESCE(excluded.star_class, systems.star_class),
+            region     = COALESCE(excluded.region, systems.region)
     """, (
         sa,
         event.get("StarSystem", ""),
-        event.get("StarPos", [None, None, None])[0],
-        event.get("StarPos", [None, None, None])[1],
-        event.get("StarPos", [None, None, None])[2],
+        x, y, z,
         None,  # star_class populated later from Scan events
+        region,
         event.get("timestamp"),
     ))
     conn.execute("""
@@ -76,15 +133,18 @@ def handle_location(event: dict, conn: sqlite3.Connection) -> None:
     if not sa:
         return
     star_pos = event.get("StarPos", [None, None, None])
+    x, y, z = star_pos[0], star_pos[1], star_pos[2]
+    region = _region_for_coords(x, z) if x is not None and z is not None else None
     conn.execute("""
-        INSERT INTO systems (system_address, name, x, y, z, star_class, first_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO systems (system_address, name, x, y, z, star_class, region, first_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(system_address) DO NOTHING
     """, (
         sa,
         event.get("StarSystem", ""),
-        star_pos[0], star_pos[1], star_pos[2],
+        x, y, z,
         event.get("StarClass"),
+        region,
         event.get("timestamp"),
     ))
 
@@ -130,11 +190,13 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
             he_pct = comp.get("Percent")
             break
 
-    # Update system's primary star class from the main-star scan
-    if body_type == "Star" and event.get("DistanceFromArrivalLS", 999) < 1:
+    # Update system's primary star class from the arrival-star scan.
+    # Always overwrite — the Scan StarType is more specific than the StarClass
+    # field in FSDJump/Location (e.g. Location may report 'O' for a WO star).
+    if body_type == "Star" and subtype and event.get("DistanceFromArrivalLS", 999) < 1:
         conn.execute("""
             UPDATE systems SET star_class = ?
-            WHERE system_address = ? AND star_class IS NULL
+            WHERE system_address = ?
         """, (subtype, sa))
 
     comp = event.get("Composition") or {}

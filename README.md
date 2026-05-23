@@ -32,6 +32,10 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 ![Notable Stellar Phenomena section with 3D map, FSS detections table, and per-type catalogues](docs/screenshots/notable-stellar-phenomena.png)
 
+**Query Builder**
+
+![Query Builder — browser-based SQL query builder with condition editor, history panel, and results table](docs/screenshots/query-builder.png)
+
 
 ## Features
 
@@ -47,7 +51,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Species catalogue** — species grouped by genus with per-genus overview panels and per-species drill-down; first-log tracking; scan counts, estimated and actual sale values; planet-type breakdown per species; Horizons-era genera (Anemone, Brain Trees, Sinuous Tubers, Bark Mounds, Crystalline Shards, Amphora Plants) are labelled and sorted to the bottom of the list; Bark Mounds are sourced from codex entries since they are not bio-scannable
 - **Spectral distribution charts** — per-species and per-body-type line charts showing how scan counts and occurrence percentages are distributed across the detailed spectral subclass of the dominant star (G2, F5, K3, …); useful for cross-referencing community data such as the He% vs Stratum Tectonicas chart
 - **System map** — interactive canvas-based system diagram, opened by clicking any system name in the dashboard; shows all bodies in their hierarchical tree layout with scaled icons, ring indicators, first-discovered badges, terraformable highlights, rich tooltips (surface properties, bio species, ring details), a two-column icon legend, and a galaxy minimap showing the system's position relative to Sol, Colonia, and Beagle Point
-- **Clickable system links** — system and body name references throughout the dashboard (Personal Records, Property Ranges tables, Vicinity Hints) open the system map modal on click
+- **Clickable system links** — system and body name references throughout the dashboard (Personal Records, Property Ranges tables, Vicinity Hints) and in the query builder results table open the system map modal on click
 - **Personal Records** — top-10 lists for most bodies, most stars, most bio signals, top exobiology value, and top exploration value per system; all tables show distance to current commander position; Miscellaneous personal bests (highest/lowest gravity, hottest/coldest surface, largest/smallest radius, largest ring outer radius, longest jump)
 - **Vicinity Hints** — automatically surfaces interesting boxels within 5,000 ly of the commander's current position:
   - *Potential helium-rich boxel* — mean He% above 28.5% with ≥3 gas giants
@@ -56,6 +60,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Notable Stellar Phenomena** — codex entries for all NSP types (anomalies, Lagrange-cloud organisms, crystals, molluscs, plants, seed pods, and mineral formations) classified into categories and subcategories; interactive 3D galaxy map with colour-coded markers per subcategory (same hue family per category, lightness varies by subcategory); FSS Detections table listing every system where an NSP signal was found with catalogued NSP types shown as coloured tags; per-type subcategory drill-down panels with new-codex-entry tracking (the game flags `IsNewEntry` when a type is logged for the first time in a given galactic region by this commander) and decoded galactic region names; overview counts (systems detected, codex entries, new codex entries, unique systems, categories found)
 - **Income charts** — exploration and exobiology credits earned over time (cumulative)
 - **Dashboard** — all of the above assembled into a single self-contained HTML file with a tabbed navigation sidebar, showing the current package version
+- **Query Builder** — browser-based visual query builder served locally over Flask; build conditions with dropdowns for entity, field, operator, and value; supports 5 entities (Systems, Planets, Stars, Organic Scans, Rings) with choice dropdowns for star class, planet type, genus, species, ring class, atmosphere, and galactic region; boolean fields (landable, mapped, FSS complete, etc.) render as Yes/No dropdowns; numeric fields support =, ≠, >, ≥, <, ≤, and between; date fields support `on`, `from (≥)`, `until (≤)`, `after (>)`, `before (<)`, and `between` operators with a date picker; per-condition AND/OR logic pills (each pill toggles independently; AND is green, OR is orange); Raw SQL mode for arbitrary SELECT/WITH/EXPLAIN queries; query history (up to 50 entries, localStorage, deduplicated) with one-click re-run and load-into-editor; auto-opens the browser on start; sortable results table; Copy SQL, Copy TSV, and Copy CSV buttons; system name columns in results open the interactive system-map modal on click
 
 ## Requirements
 
@@ -305,6 +310,45 @@ The dashboard sections:
 | Star-class Catalogue | Stars grouped by type; per-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
 | Notable Stellar Phenomena | Overview counts; interactive 3D galaxy map with colour-coded markers (category hue, subcategory lightness); FSS Detections table with catalogued NSP types as coloured tags; per-category and per-subcategory drill-down panels with new-codex-entry tracking and decoded galactic region names |
 
+### `pdm run serve` — Query Builder
+
+Starts a local Flask web server and opens the query builder in the browser.
+
+```
+pdm run serve -- [--db PATH] [--port PORT]
+```
+
+| Flag | Description |
+|---|---|
+| `--db PATH` | Use a different database file (default: `.edda/ed.db`) |
+| `--port PORT` | Port to listen on (default: `5000`) |
+
+The server runs at `http://localhost:5000/` (or the specified port) and can be stopped with Ctrl-C.
+
+**Launcher scripts** (alternative to `pdm run serve` for double-click launch):
+
+| Script | Platform |
+|---|---|
+| `serve.bat` | Windows — double-click or run in any terminal |
+| `serve.ps1` | Windows PowerShell |
+| `serve.sh` | Linux / macOS |
+
+#### Builder mode
+
+Select an entity (Systems, Planets, Stars, Organic Scans, Rings), add one or more conditions, and click **Run**. Each condition has an entity selector, a field dropdown, an operator, and a value input. Choice fields (star class, planet type, genus, species, region, atmosphere, ring class, and all Yes/No fields) render as dropdown menus. Numeric fields support `=`, `≠`, `>`, `≥`, `<`, `≤`, and `between`. Date fields support `on`, `from (≥)`, `until (≤)`, `after (>)`, `before (<)`, and `between` with a date-picker input. Text fields support `=`, `≠`, `contains`, `starts with`, and `ends with`.
+
+The logic pill between each pair of conditions shows `AND` or `OR` and can be clicked to toggle it independently, allowing mixed-logic queries (e.g. `A AND B OR C`). The global AND/OR toggle sets the default for new conditions.
+
+After running, the generated SQL is shown below the results and is automatically loaded into the Raw SQL editor. The results meta bar includes **Copy SQL**, **Copy TSV**, and **Copy CSV** buttons. System name cells in the results table are clickable links that open the interactive system-map modal.
+
+#### Raw SQL mode
+
+Write any `SELECT`, `WITH`, or `EXPLAIN` query directly. Results are returned in the same sortable table as the builder. Only read queries are accepted.
+
+#### Query history
+
+Every query that returns results is saved to browser localStorage (`edda_qb_history`). The history panel (collapsible) shows the 50 most recent unique queries with timestamp, a truncated preview, and buttons to re-run (▶), load into the editor (Edit), or delete (×).
+
 ## 3D Map Navigation
 
 All interactive 3D maps (3D Galaxy Maps, NSP Map, and the trip report route map) use Plotly's 3D scene controls:
@@ -405,6 +449,7 @@ Exobiology values use the Vista Genomics price table with optional first-log (×
 ```
 src/edda/
 ├── cli.py                  entry points for all pdm run commands
+├── serve.py                Flask query builder web UI (pdm run serve)
 ├── db/
 │   ├── schema.py           SQLite schema definition
 │   └── connection.py       open_db(), upsert helpers
