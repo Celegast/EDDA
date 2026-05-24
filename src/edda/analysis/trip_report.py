@@ -29,6 +29,17 @@ from .dashboard import _SYS_MODAL_CSS, _SYS_MODAL_JS, _SYS_MODAL_HTML
 
 
 # ---------------------------------------------------------------------------
+# Powerplay conversion rates (credits → merits / control points)
+# Derived from in-game research; applied to estimated credit values.
+# ---------------------------------------------------------------------------
+
+_PP_EXOBIO_MERIT_RATE = 107_000   # Cr per merit from exobiology
+_PP_EXOBIO_CP_RATE    = 222_000   # Cr per control point from exobiology
+_PP_EXPL_MERIT_RATE   =   8_200   # Cr per merit from exploration
+_PP_EXPL_CP_RATE      =  17_000   # Cr per control point from exploration
+
+
+# ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
@@ -171,6 +182,134 @@ def _earnings_timeline_fig(df: pd.DataFrame,
     fig.update_yaxes(title_text="Cumulative Cr",    row=1, col=1, secondary_y=True)
     fig.update_yaxes(title_text="Cr / active hour", row=2, col=1)
     fig.update_xaxes(title_text="Date",             row=2, col=1)
+    return fig
+
+
+def _powerplay_fig(df: pd.DataFrame) -> go.Figure | None:
+    """
+    Two-row chart:
+      Row 1 — daily merits stacked bars (exploration + exobiology) with
+              cumulative merits AND cumulative CPs on the secondary y-axis.
+      Row 2 — merits per active hour bars with 3-day rolling average line
+              and overall-average hline.
+    """
+    if df.empty:
+        return None
+
+    df = df.copy()
+    df["merit_expl"]   = df["exploration"] / _PP_EXPL_MERIT_RATE
+    df["merit_exobio"] = df["exobiology"]  / _PP_EXOBIO_MERIT_RATE
+    df["merit_total"]  = df["merit_expl"] + df["merit_exobio"]
+    df["merit_cum"]    = df["merit_total"].cumsum()
+
+    df["cp_total"] = (
+        df["exploration"] / _PP_EXPL_CP_RATE
+        + df["exobiology"] / _PP_EXOBIO_CP_RATE
+    )
+    df["cp_cum"] = df["cp_total"].cumsum()
+
+    active_hours = df["session_hours"].replace(0, float("nan"))
+    df["merit_per_hour"] = df["merit_total"] / active_hours
+    df["cp_per_hour"]    = df["cp_total"]    / active_hours
+
+    total_merits = df["merit_total"].sum()
+    total_cps    = df["cp_total"].sum()
+    total_hours  = max(df["session_hours"].sum(), 1 / 60)
+    merits_per_h = total_merits / total_hours
+    cps_per_h    = total_cps    / total_hours
+
+    rolling_avg     = df["merit_per_hour"].rolling(3, min_periods=1).mean()
+    overall_avg     = df["merit_per_hour"].mean()
+    overall_avg_cp  = df["cp_per_hour"].mean()
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
+        row_heights=[0.62, 0.38],
+        shared_xaxes=True,
+        vertical_spacing=0.12,
+    )
+
+    # ── Row 1: Merits / day ───────────────────────────────────────────────────
+    fig.add_trace(go.Bar(
+        x=df["day"], y=df["merit_expl"],
+        name="Merits (exploration)", marker_color="#4488cc", opacity=0.85,
+        hovertemplate="Expl merits: %{y:,.0f}<extra></extra>",
+    ), row=1, col=1, secondary_y=False)
+
+    fig.add_trace(go.Bar(
+        x=df["day"], y=df["merit_exobio"],
+        name="Merits (exobiology)", marker_color="#44cc88", opacity=0.85,
+        hovertemplate="Exobio merits: %{y:,.0f}<extra></extra>",
+    ), row=1, col=1, secondary_y=False)
+
+    fig.add_trace(go.Scatter(
+        x=df["day"], y=df["merit_cum"],
+        name="Cumulative merits", mode="lines",
+        line=dict(color="#ffcc44", width=2, dash="dot"),
+        hovertemplate="Cumulative merits: %{y:,.0f}<extra></extra>",
+    ), row=1, col=1, secondary_y=True)
+
+    fig.add_trace(go.Scatter(
+        x=df["day"], y=df["cp_cum"],
+        name="Cumulative CPs", mode="lines",
+        line=dict(color="#ff88aa", width=2, dash="dot"),
+        hovertemplate="Cumulative CPs: %{y:,.0f}<extra></extra>",
+    ), row=1, col=1, secondary_y=True)
+
+    # ── Row 2: Merits / active hour ───────────────────────────────────────────
+    fig.add_trace(go.Bar(
+        x=df["day"], y=df["merit_per_hour"],
+        name="Merits / hour", marker_color="#6688bb", opacity=0.75,
+        showlegend=True,
+        hovertemplate="Merits/h: %{y:,.0f}<extra></extra>",
+    ), row=2, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=df["day"], y=rolling_avg,
+        name="3-day avg (merits/h)", mode="lines",
+        line=dict(color="#ffcc44", width=2),
+        hovertemplate="3-day avg: %{y:,.0f}<extra></extra>",
+    ), row=2, col=1)
+
+    fig.add_hline(
+        y=overall_avg, row=2, col=1,
+        line=dict(color="#ffcc44", width=1, dash="dash"),
+        annotation_text=f"avg {overall_avg:,.0f} merits/h",
+        annotation_position="top right",
+        annotation_font_color="#ffcc44",
+    )
+    fig.add_hline(
+        y=overall_avg_cp, row=2, col=1,
+        line=dict(color="#ff8844", width=1, dash="dash"),
+        annotation_text=f"avg {overall_avg_cp:,.0f} CPs/h",
+        annotation_position="bottom right",
+        annotation_font_color="#ff8844",
+    )
+
+    fig.update_layout(
+        title=dict(
+            text=(
+                f"Powerplay — "
+                f"{total_merits:,.0f} merits ({merits_per_h:,.0f}/h)"
+                f"  ·  "
+                f"{total_cps:,.0f} control points ({cps_per_h:,.0f}/h)"
+            ),
+            font=dict(color="white"),
+        ),
+        barmode="stack",
+        paper_bgcolor="#0a0a1a", plot_bgcolor="#0f0f2a", font_color="white",
+        legend=dict(bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
+        hovermode="x unified",
+        margin=dict(l=60, r=80, t=50, b=40),
+        height=480,
+    )
+    fig.update_xaxes(gridcolor="#222244")
+    fig.update_yaxes(gridcolor="#222244")
+    fig.update_yaxes(title_text="Merits / day",      row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="Cumulative",         row=1, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="Merits / active hour", row=2, col=1)
+    fig.update_xaxes(title_text="Date", row=2, col=1)
     return fig
 
 
@@ -510,6 +649,7 @@ def build_trip_report(
     df_tl    = st.trip_value_timeline(conn, date_from, date_to,
                                        exobio_bonus=exobio_bonus, expl_bonus=expl_bonus)
     fig_tl   = _earnings_timeline_fig(df_tl, exobio_bonus=exobio_bonus, expl_bonus=expl_bonus)
+    fig_pp   = _powerplay_fig(df_tl)
 
     print("  System diagram data...")
     diagram_data = st.trip_system_diagram_data(conn, date_from, date_to)
@@ -565,6 +705,27 @@ def build_trip_report(
         f'</div>'
     )
 
+    # Powerplay summary cards (only when timeline has data)
+    pp_summary = ""
+    if not df_tl.empty:
+        _tl_expl   = df_tl["exploration"].sum()
+        _tl_exobio = df_tl["exobiology"].sum()
+        _pp_merits  = _tl_expl / _PP_EXPL_MERIT_RATE + _tl_exobio / _PP_EXOBIO_MERIT_RATE
+        _pp_cps     = _tl_expl / _PP_EXPL_CP_RATE    + _tl_exobio / _PP_EXOBIO_CP_RATE
+        _pp_hours   = max(df_tl["session_hours"].sum(), 1 / 60)
+        pp_summary = (
+            f'<div class="stat-row" style="margin-top:6px">'
+            f'<div class="stat-card"><div class="stat-val">{_pp_merits:,.0f}</div>'
+            f'<div class="stat-label">Est. PP merits</div></div>'
+            f'<div class="stat-card"><div class="stat-val">{_pp_merits/_pp_hours:,.0f}</div>'
+            f'<div class="stat-label">Merits / active hour</div></div>'
+            f'<div class="stat-card"><div class="stat-val">{_pp_cps:,.0f}</div>'
+            f'<div class="stat-label">Est. control points</div></div>'
+            f'<div class="stat-card"><div class="stat-val">{_pp_cps/_pp_hours:,.0f}</div>'
+            f'<div class="stat-label">Control pts / active hour</div></div>'
+            f'</div>'
+        )
+
     _3d_nav_hint = (
         '<p class="map-nav-hint">'
         '<kbd>drag</kbd> rotate &nbsp;·&nbsp;'
@@ -575,9 +736,10 @@ def build_trip_report(
     )
 
     sections = [
-        _section("Overview", _overview_cards(data) + value_summary),
+        _section("Overview", _overview_cards(data) + value_summary + pp_summary),
         _section("3D Route", _chart(fig_route) + (_3d_nav_hint if fig_route else "")),
         _section("Earnings per Day", _chart(fig_tl)),
+        _section("Powerplay Estimates", _chart(fig_pp)) if fig_pp else "",
         _section("Exobiology Samples", _exobio_table(est, exobio_bonus=exobio_bonus)),
         _section("Planet Types", _planet_table(bodies)),
         _section("Personal Bests", _records_table(records)),
