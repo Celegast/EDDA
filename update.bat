@@ -26,7 +26,7 @@ if errorlevel 1 ( echo git pull failed & pause & exit /b 1 )
 :: ---------------------------------------------------------------
 :step2
 echo.
-echo [2/5] Syncing dependencies...
+echo [2/5] Installing dependencies...
 set PDM=pdm
 where pdm >nul 2>&1
 if errorlevel 1 (
@@ -41,8 +41,8 @@ if errorlevel 1 (
     )
     set PDM=python -m pdm
 )
-%PDM% sync
-if errorlevel 1 ( echo Dependency sync failed & pause & exit /b 1 )
+%PDM% install
+if errorlevel 1 ( echo Dependency install failed & pause & exit /b 1 )
 
 :: ---------------------------------------------------------------
 :: Step 3: Import journal data

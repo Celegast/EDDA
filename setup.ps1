@@ -17,7 +17,7 @@ function Pdm([string[]]$a) {
 }
 
 Write-Host "Installing dependencies..."
-Pdm "sync"
+Pdm "install"
 
 Write-Host ""
 Write-Host "Done. Run update.ps1 to import journals and build the dashboard." -ForegroundColor Green

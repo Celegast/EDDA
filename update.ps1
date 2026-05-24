@@ -20,8 +20,8 @@ if ($hasGit -and (Test-Path ".git")) {
     Write-Host "  Not a git repository — skipping pull." -ForegroundColor DarkYellow
 }
 
-# 2. Sync dependencies
-Step 2 5 "Syncing dependencies..."
+# 2. Install dependencies
+Step 2 5 "Installing dependencies..."
 $usePythonMPdm = $false
 if (Get-Command pdm -ErrorAction SilentlyContinue) {
     # pdm is in PATH, nothing to do
@@ -43,7 +43,7 @@ function Pdm([string[]]$a) {
     if ($LASTEXITCODE -ne 0) { throw "pdm $($a -join ' ') failed" }
 }
 
-Pdm "sync"
+Pdm "install"
 
 # 3. Import latest journal data
 Step 3 5 "Importing journal data..."

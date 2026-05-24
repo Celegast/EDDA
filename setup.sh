@@ -18,7 +18,7 @@ else
 fi
 
 echo "Installing dependencies..."
-$PDM sync
+$PDM install
 
 echo
 echo -e "${GREEN}Done. Run ./update.sh to import journals and build the dashboard.${NC}"

@@ -24,8 +24,8 @@ else
     echo -e "${DARK_YELLOW}  Not a git repository — skipping pull.${NC}"
 fi
 
-# 2. Sync dependencies
-step 2 "Syncing dependencies..."
+# 2. Install dependencies
+step 2 "Installing dependencies..."
 if command -v pdm &>/dev/null; then
     PDM="pdm"
 elif python3 -m pdm --version &>/dev/null 2>&1; then
@@ -33,7 +33,7 @@ elif python3 -m pdm --version &>/dev/null 2>&1; then
 else
     die "PDM not found. Install with: pip install pdm\n  Then ensure the Python bin directory is in your PATH (e.g. ~/.local/bin)"
 fi
-$PDM sync
+$PDM install
 
 # 3. Import latest journal data
 step 3 "Importing journal data..."

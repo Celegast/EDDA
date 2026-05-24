@@ -14,7 +14,7 @@ if errorlevel 1 (
 )
 
 echo Installing dependencies...
-%PDM% sync
+%PDM% install
 if errorlevel 1 ( echo Installation failed & pause & exit /b 1 )
 
 echo.
