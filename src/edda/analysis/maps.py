@@ -1487,3 +1487,212 @@ def plot_trip_route_3d(
         return fig
     _write_interactive(fig, out_path)
     return None
+
+
+def plot_trip_route_3d_focused(
+    df_route: pd.DataFrame,
+    df_systems: pd.DataFrame,
+) -> go.Figure | None:
+    """
+    Same layers as plot_trip_route_3d but zoomed to the actual route extent.
+
+    Axis ranges are computed from the visited systems (+ 15 % padding, min
+    500 ly per axis).  Region boundaries are omitted (irrelevant at close
+    range); only landmarks that fall inside the padded viewport are shown.
+    aspectmode="data" preserves true 3-D proportions of the route.
+    """
+    if df_route.empty:
+        return None
+    df_r = df_route.dropna(subset=["x", "y", "z"]).copy()
+    if df_r.empty:
+        return None
+
+    # ── Compute padded axis ranges ─────────────────────────────────────────
+    def _axis_range(series: pd.Series, min_half: float = 500.0) -> list[float]:
+        lo, hi = float(series.min()), float(series.max())
+        span = max(hi - lo, 2 * min_half)
+        pad  = span * 0.15
+        return [lo - pad, hi + pad]
+
+    rng_x = _axis_range(df_r["x"])
+    rng_y = _axis_range(df_r["y"])
+    rng_z = _axis_range(df_r["z"])
+
+    # ── Landmarks: split into visible (in-viewport) and off-map ──────────
+    def _in_range(v: float, rng: list[float]) -> bool:
+        return rng[0] <= v <= rng[1]
+
+    vis_lm = [
+        lm for lm in _LANDMARKS
+        if _in_range(lm[1], rng_x) and _in_range(lm[2], rng_y) and _in_range(lm[3], rng_z)
+    ]
+    off_lm = [lm for lm in _LANDMARKS if lm not in vis_lm]
+
+    # Route centroid — origin for direction arrows
+    cx = float(df_r["x"].mean())
+    cy = float(df_r["y"].mean())
+    cz = float(df_r["z"].mean())
+
+    def _box_exit(lx: float, ly: float, lz: float) -> tuple[float, float, float]:
+        """Point where the ray from centroid toward (lx,ly,lz) exits the viewport box."""
+        dx, dy, dz = lx - cx, ly - cy, lz - cz
+        ts = []
+        for val, c, rng in ((dx, cx, rng_x), (dy, cy, rng_y), (dz, cz, rng_z)):
+            if val > 0:
+                ts.append((rng[1] - c) / val)
+            elif val < 0:
+                ts.append((rng[0] - c) / val)
+        t = min(t for t in ts if t > 0)
+        return cx + t * dx, cy + t * dy, cz + t * dz
+
+    traces: list[go.Scatter3d] = []
+
+    # --- Route line ---
+    traces.append(go.Scatter3d(
+        x=df_r["x"].tolist(), y=df_r["y"].tolist(), z=df_r["z"].tolist(),
+        mode="lines",
+        line=dict(color="#4488cc", width=2),
+        name="Route",
+        hoverinfo="skip",
+    ))
+
+    # --- Bubble layers ---
+    if not df_systems.empty:
+        df_s = df_systems.dropna(subset=["x", "y", "z"]).copy()
+
+        if "est_total" in df_s.columns and df_s["est_total"].sum() > 0:
+            df_v = df_s[df_s["est_total"] > 0].sort_values("est_total")
+            max_val = float(df_v["est_total"].max()) or 1.0
+            sizes_v = (4 + 16 * (df_v["est_total"] / max_val) ** 0.5).tolist()
+            val_labels = df_v["est_total"].apply(
+                lambda v: f"{v/1e6:.1f} MCr" if v >= 1e6 else f"{v/1e3:.0f} KCr"
+            ).tolist()
+            traces.append(go.Scatter3d(
+                x=df_v["x"].tolist(), y=df_v["y"].tolist(), z=df_v["z"].tolist(),
+                mode="markers",
+                marker=dict(size=sizes_v, color="#ff9944", opacity=0.80,
+                            line=dict(width=0)),
+                text=df_v["name"].tolist(),
+                customdata=val_labels,
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "Est. value: %{customdata}<extra></extra>"
+                ),
+                name="Est. system value",
+            ))
+
+        if "bio_signals_total" in df_s.columns:
+            df_bio = df_s[df_s["bio_signals_total"] > 0].sort_values("bio_signals_total")
+            if not df_bio.empty:
+                sizes_bio = (5 + df_bio["bio_signals_total"].clip(upper=8) * 2).tolist()
+                traces.append(go.Scatter3d(
+                    x=df_bio["x"].tolist(), y=df_bio["y"].tolist(), z=df_bio["z"].tolist(),
+                    mode="markers",
+                    marker=dict(size=sizes_bio, color="#44dd88", opacity=0.85,
+                                line=dict(width=0)),
+                    text=df_bio["name"].tolist(),
+                    customdata=df_bio["bio_signals_total"].astype(int).tolist(),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        "Bio signals: %{customdata}<extra></extra>"
+                    ),
+                    name="Bio signals",
+                ))
+
+        if "bodies_mapped" in df_s.columns:
+            df_map = df_s[df_s["bodies_mapped"] > 0].sort_values("bodies_mapped")
+            if not df_map.empty:
+                sizes_map = (5 + (df_map["bodies_mapped"].clip(upper=15) * 1.2)).tolist()
+                traces.append(go.Scatter3d(
+                    x=df_map["x"].tolist(), y=df_map["y"].tolist(), z=df_map["z"].tolist(),
+                    mode="markers",
+                    marker=dict(size=sizes_map, color="#88ccff", opacity=0.75,
+                                line=dict(width=0)),
+                    text=df_map["name"].tolist(),
+                    customdata=df_map["bodies_mapped"].astype(int).tolist(),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        "Mapped bodies: %{customdata}<extra></extra>"
+                    ),
+                    name="Mapped bodies",
+                    visible="legendonly",
+                ))
+
+    # --- Start / end markers ---
+    start, end = df_r.iloc[0], df_r.iloc[-1]
+    traces.append(go.Scatter3d(
+        x=[start["x"], end["x"]], y=[start["y"], end["y"]], z=[start["z"], end["z"]],
+        mode="markers+text",
+        marker=dict(size=8, color=["#44ff44", "#ff4444"], opacity=1.0,
+                    symbol="square", line=dict(width=0)),
+        text=[start["name"][:24], end["name"][:24]],
+        textposition=["top center", "top center"],
+        textfont=dict(size=9, color="white"),
+        name="Start / End",
+        hoverinfo="skip",
+    ))
+
+    # --- Visible landmarks ---
+    if vis_lm:
+        traces.append(go.Scatter3d(
+            x=[lm[1] for lm in vis_lm],
+            y=[lm[2] for lm in vis_lm],
+            z=[lm[3] for lm in vis_lm],
+            mode="markers+text",
+            marker=dict(color=[lm[4] for lm in vis_lm], size=8, symbol="diamond"),
+            text=[lm[0] for lm in vis_lm],
+            textposition="top right",
+            textfont=dict(color="white", size=11),
+            name="Landmarks",
+            hovertemplate=(
+                "<b>%{text}</b><br>(%{x:.1f}, %{y:.1f}, %{z:.1f}) ly<extra></extra>"
+            ),
+        ))
+
+    # --- Off-viewport landmark direction indicators ───────────────────────
+    # Place a marker at 92 % of the way from centroid to the viewport edge,
+    # labelled with the landmark name and straight-line distance.
+    if off_lm:
+        ax_list, ay_list, az_list, texts, colours = [], [], [], [], []
+        for lm in off_lm:
+            ex, ey, ez = _box_exit(lm[1], lm[2], lm[3])
+            ax_list.append(cx + 0.92 * (ex - cx))
+            ay_list.append(cy + 0.92 * (ey - cy))
+            az_list.append(cz + 0.92 * (ez - cz))
+            dist = ((lm[1] - cx) ** 2 + (lm[2] - cy) ** 2 + (lm[3] - cz) ** 2) ** 0.5
+            texts.append(f"→ {lm[0]} ({dist:,.0f} ly)")
+            colours.append(lm[4])
+        traces.append(go.Scatter3d(
+            x=ax_list, y=ay_list, z=az_list,
+            mode="markers+text",
+            marker=dict(size=6, color=colours, symbol="circle-open",
+                        line=dict(width=2, color=colours)),
+            text=texts,
+            textposition="top right",
+            textfont=dict(color="white", size=10),
+            name="Direction to landmark",
+            hoverinfo="skip",
+        ))
+
+    n_sys = len(df_r)
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        title=dict(text=f"Route (close-up) — {n_sys:,} systems", font=dict(color="white")),
+        scene=dict(
+            xaxis=dict(title="X (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=[rng_x[1], rng_x[0]]),
+            yaxis=dict(title="Y (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=rng_y),
+            zaxis=dict(title="Z (ly)", color="white", gridcolor="#333355",
+                       showbackground=False, range=rng_z),
+            bgcolor="#0a0a1a",
+            aspectmode="data",
+            camera=dict(eye=dict(x=0.0, y=1.2, z=-1.8), up=dict(x=0, y=1, z=0)),
+        ),
+        paper_bgcolor="#0a0a1a", font_color="white",
+        width=1000, height=700,
+        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top",
+                    groupclick="toggleitem",
+                    bgcolor="rgba(10,10,30,0.8)", bordercolor="#444466", borderwidth=1),
+    )
+    return fig

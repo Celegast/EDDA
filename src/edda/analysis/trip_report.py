@@ -640,10 +640,11 @@ def build_trip_report(
     sys_df   = st.trip_systems_visited(conn, date_from, date_to)
 
     print("  Route map...")
-    df_route   = st.trip_route_points(conn, date_from, date_to)
-    df_systems = st.trip_system_data(conn, date_from, date_to,
-                                      exobio_bonus=exobio_bonus, expl_bonus=expl_bonus)
-    fig_route  = mp.plot_trip_route_3d(df_route, df_systems)
+    df_route      = st.trip_route_points(conn, date_from, date_to)
+    df_systems    = st.trip_system_data(conn, date_from, date_to,
+                                         exobio_bonus=exobio_bonus, expl_bonus=expl_bonus)
+    fig_route     = mp.plot_trip_route_3d(df_route, df_systems)
+    fig_route_zoom = mp.plot_trip_route_3d_focused(df_route, df_systems)
 
     print("  Earnings timeline...")
     df_tl    = st.trip_value_timeline(conn, date_from, date_to,
@@ -738,6 +739,7 @@ def build_trip_report(
     sections = [
         _section("Overview", _overview_cards(data) + value_summary + pp_summary),
         _section("3D Route", _chart(fig_route) + (_3d_nav_hint if fig_route else "")),
+        _section("3D Route (Close-up)", _chart(fig_route_zoom) + (_3d_nav_hint if fig_route_zoom else "")),
         _section("Earnings per Day", _chart(fig_tl)),
         _section("Powerplay Estimates", _chart(fig_pp)) if fig_pp else "",
         _section("Exobiology Samples", _exobio_table(est, exobio_bonus=exobio_bonus)),
