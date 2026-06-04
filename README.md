@@ -64,12 +64,14 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 ## Requirements
 
-- Python 3.12 or newer
+- Python 3.12 or newer — download from [python.org](https://www.python.org/downloads/); `pip` is bundled with the standard installer on all platforms
 - Elite Dangerous installed (journal files must be accessible)
 
 > **PDM and PATH**: the setup and update scripts fall back to `python -m pdm` automatically if `pdm` is not on your PATH. The `pdm run …` commands listed in this README however require `pdm` to be reachable directly. On Windows the typical location to add is `%APPDATA%\Python\PythonXXX\Scripts`; on Linux/macOS it is usually `~/.local/bin`.
 
 ## Installation
+
+> **Before running the setup script, install Python 3.12+ from [python.org](https://www.python.org/downloads/).** On Windows, tick *"Add Python to PATH"* during installation and open a fresh terminal afterwards. The setup script then installs PDM automatically — no manual `pip install pdm` step is required. If you prefer to install PDM yourself first, run `pip install pdm` before setup.
 
 **Windows (double-click or run in any terminal):**
 ```bat
@@ -89,7 +91,7 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-This runs `pdm install`, which creates a virtual environment and installs all dependencies.
+This installs PDM if needed, then runs `pdm install` to create a virtual environment and install all dependencies.
 
 ## Updating
 
