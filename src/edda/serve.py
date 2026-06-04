@@ -718,13 +718,15 @@ def get_system_data():
     conn = _conn()
     try:
         row = conn.execute(
-            "SELECT system_address, name, star_class, x, z"
+            "SELECT system_address, name, star_class, x, z, first_seen_at"
             " FROM systems WHERE system_address = ?", (sa_int,)
         ).fetchone()
         if not row:
             return jsonify(None)
+        fv = row[5][:10] if row[5] else None
         result: dict[str, Any] = {
-            "name": row[1], "sc": row[2] or "", "x": row[3], "z": row[4], "bodies": []
+            "name": row[1], "sc": row[2] or "", "x": row[3], "z": row[4],
+            "fv": fv, "bodies": []
         }
         for r in conn.execute("""
             SELECT b.body_id, b.name, b.body_type, b.subtype,
@@ -1259,7 +1261,8 @@ function copySQL() {
 
 function copyTable(fmt) {
   if (!lastResults) return;
-  const saIdx = lastResults.columns.indexOf("_sa");
+  let saIdx = lastResults.columns.indexOf("_sa");
+  if (saIdx < 0) saIdx = lastResults.columns.indexOf("system_address");
   const sep = fmt === "csv" ? "," : "\t";
   function cell(v) {
     const s = (v === null || v === undefined) ? "" : String(v);
@@ -1318,10 +1321,19 @@ async function execRaw(sql) {
 }
 
 // ── Table renderer ────────────────────────────────────────────────────────────
+// Column names (lowercase) whose cells are rendered as clickable system-map links
+// when a system address is available in the result set.
+const _LINK_COL_NAMES = new Set([
+  "system", "system_name", "name", "body", "body_name", "body / system"
+]);
+
 function renderTable(wrap, cols, rows) {
-  const saIdx = cols.indexOf("_sa");
+  // SA source: _sa (injected by builder) or system_address (present in raw SQL).
+  // Either way the column is hidden from the visible table — it's an internal key.
+  let saIdx = cols.indexOf("_sa");
+  if (saIdx < 0) saIdx = cols.indexOf("system_address");
+
   const visCols = cols.filter((_, i) => i !== saIdx);
-  const sysColVis = visCols.indexOf("system");
   const origIdx = visCols.map(c => cols.indexOf(c));
 
   const isNum = visCols.map((_, ci) =>
@@ -1364,7 +1376,7 @@ function renderTable(wrap, cols, rows) {
         if (isNum[ci]) td.className = "num";
         if (v === null || v === "") {
           td.innerHTML = `<span class="nil">&#8212;</span>`;
-        } else if (ci === sysColVis && saIdx >= 0 && row[saIdx] != null) {
+        } else if (_LINK_COL_NAMES.has(visCols[ci].toLowerCase()) && saIdx >= 0 && row[saIdx] != null) {
           td.innerHTML = `<span class="sys-link" data-sa="${esc(String(row[saIdx]))}">${esc(String(v))}</span>`;
         } else if (isNum[ci] && typeof v === "number") {
           td.textContent = v.toLocaleString(undefined, {maximumFractionDigits:3});
@@ -1555,7 +1567,10 @@ function openSysModal(sa, fallbackName) {
             }
             _sysData = d;
             document.getElementById('sys-modal-ttl').textContent = d.name;
-            document.getElementById('sys-modal-sc').textContent = d.sc ? '(' + d.sc + ')' : '';
+            var scParts = [];
+            if (d.sc) scParts.push('(' + d.sc + ')');
+            if (d.fv) scParts.push('[' + d.fv + ']');
+            document.getElementById('sys-modal-sc').textContent = scParts.join('  ');
             _drawLegend();
             _drawGalMap(d);
             requestAnimationFrame(_drawSys);

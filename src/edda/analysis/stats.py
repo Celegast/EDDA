@@ -737,7 +737,8 @@ def system_diagram_data(conn: sqlite3.Connection) -> dict:
     for client-side orrery rendering; covers all tables, not just organic-scan systems.
     """
     sys_sql = """
-        SELECT DISTINCT s.system_address, s.name, s.star_class, s.x, s.z
+        SELECT DISTINCT s.system_address, s.name, s.star_class, s.x, s.z,
+               s.first_seen_at
         FROM bodies b
         JOIN systems s ON s.system_address = b.system_address
         WHERE b.body_type IN ('Star', 'Planet')
@@ -748,7 +749,9 @@ def system_diagram_data(conn: sqlite3.Connection) -> dict:
         return {}
 
     result = {str(r[0]): {"name": r[1], "sc": r[2] or "",
-                           "x": r[3], "z": r[4], "bodies": []}
+                           "x": r[3], "z": r[4],
+                           "fv": r[5][:10] if r[5] else None,
+                           "bodies": []}
               for r in systems}
 
     bodies_sql = """
@@ -1975,7 +1978,8 @@ def trip_system_diagram_data(conn: sqlite3.Connection,
     lo, hi = _ts_bounds(date_from, date_to)
 
     sys_sql = """
-        SELECT DISTINCT s.system_address, s.name, s.star_class, s.x, s.z
+        SELECT DISTINCT s.system_address, s.name, s.star_class, s.x, s.z,
+               s.first_seen_at
         FROM jumps j
         JOIN systems s ON s.system_address = j.system_address
         WHERE j.timestamp >= ? AND j.timestamp <= ?
@@ -1986,7 +1990,9 @@ def trip_system_diagram_data(conn: sqlite3.Connection,
         return {}
 
     result = {str(r[0]): {"name": r[1], "sc": r[2] or "",
-                           "x": r[3], "z": r[4], "bodies": []}
+                           "x": r[3], "z": r[4],
+                           "fv": r[5][:10] if r[5] else None,
+                           "bodies": []}
               for r in systems}
     sa_list = list(result.keys())
 

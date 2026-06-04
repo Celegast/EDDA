@@ -886,7 +886,10 @@ function openSysModal(sa, fallbackName) {
     }
     _sysData = d;
     document.getElementById('sys-modal-ttl').textContent = d.name;
-    document.getElementById('sys-modal-sc').textContent  = d.sc ? '(' + d.sc + ')' : '';
+    var scParts = [];
+    if (d.sc) scParts.push('(' + d.sc + ')');
+    if (d.fv) scParts.push('[' + d.fv + ']');
+    document.getElementById('sys-modal-sc').textContent  = scParts.join('  ');
     document.getElementById('sys-modal').classList.add('open');
     _drawLegend();
     _drawGalMap(d);
