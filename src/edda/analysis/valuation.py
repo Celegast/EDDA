@@ -16,6 +16,7 @@ corrections that can cause a few percent deviation from calculated figures.
 """
 
 import math
+import re
 
 # ---------------------------------------------------------------------------
 # Body value constants
@@ -58,12 +59,100 @@ TERRA_BONUS_K: dict[str, float] = {
 # terraformable or not, so it uses the terraform_state field normally.
 _ALWAYS_TERRA = {"earthlike body"}
 
+# ---------------------------------------------------------------------------
+# Star value constants
+# ---------------------------------------------------------------------------
+
+# Base k values per star type (Odyssey era, community-derived).
+# Lookup order: "{star_type}_{luminosity}".lower() first, then star_type.lower() fallback.
+# Formula:
+#   primary   star: k × (1 + mass^0.5) × (6.0 if FD else 1.0)
+#   companion star: k × 0.01 × (1 + mass^0.5) × (2.0 if FD else 1.0)
+# Calibrated against in-game sell screens (no-FD primary unless noted):
+#   A Vb = 76,868 (Pria Free HL-P d5-7, A Vb, mass=1.660, no FD)
+#   F Vb = 79,773 (Aucopp LN-A d1-2, F4 Vb, mass=1.277, no FD)
+#   F Vb = 78,990 (Huemo FN-R d5-7, mass=1.227, FD÷6 — matches Aucopp within 1%)
+#   F VI = 19,271 (Truechiae FS-B d13-2, F0 VI, mass=1.617, FD÷6)
+#   G Va = 44,514 (mean of SYNUEFAI WA-F C27-3 + PO-I C25-3, G Vab, no FD)
+#   K Vab = 81,019 (Pro Auwsy FQ-G d10-5, K Vab, mass=0.934, no FD)
+#   DC   = 14,718 (confirmed community value)
+STAR_BASE_K: dict[str, float] = {
+    # Main sequence (generic fallback — use luminosity-specific keys below when known)
+    "o":     3_933,
+    "b":     3_184,
+    "a":     1_445,   # fallback — see "a_vb" for main-sequence calibration
+    "f":    79_773,   # calibrated: F4 Vb Aucopp LN-A d1-2 (no FD)
+    "g":    44_514,   # calibrated: mean of G Vab SYNUEFAI WA-F C27-3 + PO-I C25-3 (no FD)
+    "k":     1_100,   # fallback — see "k_va"/"k_vab" for main-sequence calibration
+    "m":     1_100,   # uncalibrated
+    # Luminosity-class-specific entries (compound key: "{type}_{lum}")
+    "a_v":   40_582,   # A main seq    — HIP 12164            A V    (no FD, single point)
+    "a_vb":  76_868,   # A main seq    — Pria Free HL-P d5-7  A Vb   (no FD)
+    "f_vi":  19_271,   # F subdwarf    — Truechiae FS-B d13-2 F0 VI  (FD, star_FD_mult=6)
+    "f_vb":  79_773,   # F main seq    — Aucopp LN-A d1-2    F4 Vb  (no FD)
+    "g_va":  44_514,   # G main seq    — mean of SYNUEFAI WA-F C27-3 + PO-I C25-3 (no FD)
+    "g_vab": 44_514,   # G main seq    — same calibration, Va ≈ Vab
+    "k_va":   9_325,   # K main seq    — SWOILZ KZ-D C3             K Va   (no FD, single point)
+    "k_vab": 81_019,   # K main seq    — Pro Auwsy FQ-G d10-5       K Vab  (no FD)
+    # Brown dwarfs
+    "l":     1_100,
+    "t":     1_100,
+    "y":     1_100,
+    # Pre-main-sequence / peculiar
+    "tts":   1_100,   # T Tauri
+    "aebe":  2_111,   # Herbig Ae/Be
+    # Carbon / S-type
+    "c":     2_111,  "cs":  2_111,  "cn":  2_111,
+    "cj":    2_111,  "ch":  2_111,  "chd": 2_111,
+    "ms":    2_111,  "s":   2_111,
+    # Giant branches
+    "a_bluewhitesupergiant": 2_111,
+    "f_whitesupergiant":     2_111,
+    "m_redsupergiant":       2_111,
+    "m_redgiant":            2_111,
+    "k_orangegiant":         2_111,
+    # Wolf-Rayet
+    "w":    22_628,  "wn":  22_628,  "wnc": 22_628,
+    "wc":   22_628,  "wo":  22_628,
+    # White dwarfs
+    "d":    14_718,  "da":  14_718,  "dab": 14_718,
+    "dah":  14_718,  "daz": 14_718,  "db":  14_718,
+    "dbz":  14_718,  "dbv": 14_718,  "do":  14_718,
+    "dov":  14_718,  "dq":  14_718,  "dc":  14_718,
+    "dcv":  14_718,  "dx":  14_718,
+    # Compact objects
+    "n":    22_628,   # neutron star
+    "h":    22_628,   # black hole
+    "supermassiveblackhole": 22_628,
+    "x":    22_628,
+}
+
+# ---------------------------------------------------------------------------
 # Multipliers
-_FIRST_DISCOVERED_MULT = 2.0
-_FIRST_MAPPED_MULT     = 3.3   # replaces the not-first mapping multiplier
-_MAPPED_MULT           = 1.5   # mapped but not first-mapped
-_MASS_EXP              = 0.199977
-_MASS_SCALE            = 3 / 5.3   # ≈ 0.5660
+# ---------------------------------------------------------------------------
+_FIRST_DISCOVERED_MULT      = 2.0
+_STAR_FIRST_DISCOVERED_MULT = 6.0   # fallback FD multiplier for uncalibrated star types
+_COMPANION_K_FRACTION       = 0.01  # companion stars worth ~1% of primary k (ratio ~1:100)
+
+# Per-type FD multipliers for primary stars (compound key "{type}_{lum}" or bare type).
+# Where absent, falls back to _STAR_FIRST_DISCOVERED_MULT (6.0).
+# Derived from in-game sell screens for FD=1 systems with known k:
+#   A Vb  3.5 — mean of GREAE HYPAI (3.705), PRIA FREE (3.295), HYPIO PRI (3.552)
+#   A Vab 3.4 — BLEAE AUWSY (3.356, single point)
+#   F Vb  3.0 — median of 13 FD systems (range 2.4–4.7; F VI k calibrated at 6.0 so excluded)
+#   K Va  2.0 — EACTAILD VR-I C23-3 (1.94); PREAE CHROA AS-P C7-3 gives 2.99 (scatter: 2–3×)
+#   K Vab 2.0 — BLEAE BRIAE MM-C C13-3 (1.97)
+STAR_FD_MULT: dict[str, float] = {
+    "a_vb":  3.5,
+    "a_vab": 3.4,
+    "f_vb":  3.0,
+    "k_va":  2.0,   # EACTAILD VR-I C23-3 K Va FD: 31,735 / (9,325 × 1.753) = 1.94; PREAE gives 2.99 (higher outlier)
+    "k_vab": 2.0,   # BLEAE BRIAE MM-C C13-3 K Vab FD: 294,070 / (81,019 × 1.846) = 1.97
+}
+_FIRST_MAPPED_MULT          = 3.3   # replaces the not-first mapping multiplier
+_MAPPED_MULT                = 1.5   # mapped but not first-mapped
+_MASS_EXP                   = 0.199977
+_MASS_SCALE                 = 3 / 5.3   # ≈ 0.5660
 
 
 def body_scan_value(
@@ -83,6 +172,7 @@ def body_scan_value(
         return 0
 
     key = planet_class.lower()
+    key = re.sub(r"^sudarsky\s+", "", key)   # DB stores "Sudarsky class I gas giant"; key is "class i gas giant"
     k = BODY_BASE_K.get(key, 720)
 
     is_terraformable = (key in _ALWAYS_TERRA) or bool(
@@ -93,14 +183,58 @@ def body_scan_value(
 
     scan_value = k * (1 + _MASS_SCALE * (mass_em ** _MASS_EXP))
 
-    if first_discovered:
-        scan_value *= _FIRST_DISCOVERED_MULT
-
     if was_mapped:
+        if first_discovered:
+            scan_value *= _FIRST_DISCOVERED_MULT
         if first_mapped:
             scan_value *= _FIRST_MAPPED_MULT
         else:
             scan_value *= _MAPPED_MULT
+
+    return max(500, round(scan_value))
+
+
+def star_scan_value(
+    star_type: str | None,
+    stellar_mass: float | None,
+    first_discovered: bool,
+    luminosity: str | None = None,
+    is_primary: bool = True,
+) -> int:
+    """
+    Estimate the credit value of one star's exploration data.
+
+    star_type      — spectral class from the journal StarType field (e.g. "DC", "M", "N")
+    stellar_mass   — stellar mass in solar masses (journal StellarMass field)
+    first_discovered — True if this was the first discovery of this body
+    luminosity     — luminosity class from the journal Luminosity field (e.g. "Vb", "VI")
+    is_primary     — True for the main star of a system (body_id=1); False for companions
+
+    Formula (Odyssey era, calibrated against in-game sell values):
+        primary:   k × (1 + stellar_mass^0.5) × (fd_mult if FD else 1.0)
+        companion: k × 0.01 × (1 + stellar_mass^0.5) × (2.0 if FD else 1.0)
+    k lookup: tries "{star_type}_{luminosity}" first, falls back to star_type alone.
+    fd_mult lookup (primaries): STAR_FD_MULT[compound_key] → STAR_FD_MULT[type] → 6.0.
+    """
+    if not star_type or stellar_mass is None or stellar_mass <= 0:
+        return 0
+
+    base_key = star_type.lower()
+    lum_norm = re.sub(r"[\s\-]", "", luminosity).lower() if luminosity else None
+    key = f"{base_key}_{lum_norm}" if lum_norm and f"{base_key}_{lum_norm}" in STAR_BASE_K else base_key
+    k = STAR_BASE_K.get(key, 1_100)
+
+    if not is_primary:
+        k *= _COMPANION_K_FRACTION
+
+    scan_value = k * (1 + stellar_mass ** 0.5)
+
+    if is_primary:
+        fd_mult = STAR_FD_MULT.get(key, STAR_FD_MULT.get(base_key, _STAR_FIRST_DISCOVERED_MULT))
+    else:
+        fd_mult = _FIRST_DISCOVERED_MULT
+    if first_discovered:
+        scan_value *= fd_mult
 
     return max(500, round(scan_value))
 

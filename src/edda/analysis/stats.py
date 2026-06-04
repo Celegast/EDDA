@@ -1528,11 +1528,11 @@ def trip_estimated_values(conn: sqlite3.Connection,
       organic_first_log      — base × 5  (upper bound: all samples are first-log)
       organic_antal          — first_log × 1.3  (with Pranav Antal pledge bonus)
     """
-    from .valuation import body_scan_value, SPECIES_VALUES, ANTAL_EXOBIO_BONUS
+    from .valuation import body_scan_value, star_scan_value, SPECIES_VALUES, ANTAL_EXOBIO_BONUS
 
     lo, hi = _ts_bounds(date_from, date_to)
 
-    # --- Exploration data ---
+    # --- Exploration data (planets) ---
     body_sql = """
         SELECT subtype AS planet_class, mass_em, terraform_state,
                first_discovered, was_mapped, first_mapped
@@ -1554,6 +1554,34 @@ def trip_estimated_values(conn: sqlite3.Connection,
                 first_discovered=bool(r["first_discovered"]),
                 was_mapped=bool(r["was_mapped"]),
                 first_mapped=bool(r["first_mapped"]),
+            ),
+            axis=1,
+        ).sum())
+
+    # --- Exploration data (stars) ---
+    star_sql = """
+        SELECT b.body_id, b.subtype, b.mass_em, b.luminosity,
+               b.first_discovered,
+               (SELECT MIN(b2.body_id) FROM bodies b2
+                WHERE b2.system_address = b.system_address
+                  AND b2.body_type = 'Star') AS min_body_id
+        FROM bodies b
+        WHERE b.body_type = 'Star'
+          AND b.subtype IS NOT NULL
+          AND b.mass_em IS NOT NULL
+          AND b.scanned_at >= ? AND b.scanned_at <= ?
+    """
+    df_s = pd.read_sql_query(star_sql, conn, params=(lo, hi))
+    if df_s.empty:
+        star_est = 0
+    else:
+        star_est = int(df_s.apply(
+            lambda r: star_scan_value(
+                star_type=r["subtype"],
+                stellar_mass=r["mass_em"],
+                first_discovered=bool(r["first_discovered"]),
+                luminosity=r["luminosity"],
+                is_primary=(r["body_id"] == r["min_body_id"]),
             ),
             axis=1,
         ).sum())
@@ -1586,6 +1614,7 @@ def trip_estimated_values(conn: sqlite3.Connection,
 
     return {
         "exploration_estimate": expl,
+        "star_estimate":        star_est,
         "organic_species":      pd.DataFrame(rows),
         "organic_base":         total_base,
         "organic_first_log":    total_fl,

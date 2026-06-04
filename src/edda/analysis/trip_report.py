@@ -690,13 +690,17 @@ def build_trip_report(
     )
 
     expl_est  = est["exploration_estimate"] * (1 + expl_bonus)
+    star_est  = est["star_estimate"] * (1 + expl_bonus)
     org_est   = est["organic_first_log"] * (1 + exobio_bonus)
     expl_lbl  = f"Est. exploration value" + (f" (+{expl_bonus*100:.0f}% LYR)" if expl_bonus else "")
+    star_lbl  = f"Est. star values (approx)" + (f" (+{expl_bonus*100:.0f}% LYR)" if expl_bonus else "")
     org_lbl   = f"Est. exobiology value"  + (f" (+{exobio_bonus*100:.0f}% Antal)" if exobio_bonus else "")
     value_summary = (
         f'<div class="stat-row" style="margin-top:10px">'
         f'<div class="stat-card"><div class="stat-val">{_cr(expl_est)}</div>'
         f'<div class="stat-label">{expl_lbl}</div></div>'
+        f'<div class="stat-card"><div class="stat-val">{_cr(star_est)}</div>'
+        f'<div class="stat-label">{star_lbl}</div></div>'
         f'<div class="stat-card"><div class="stat-val">{_cr(org_est)}</div>'
         f'<div class="stat-label">{org_lbl}</div></div>'
         f'<div class="stat-card"><div class="stat-val">{_cr(data["organic_credits"])}</div>'

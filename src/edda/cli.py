@@ -226,6 +226,7 @@ def cmd_trip(argv: list[str] | None = None) -> None:
             print("  (no planet scans in this range)")
 
         print(f"\n  {'Estimated value of exploration data:':<50} {est['exploration_estimate']:>18,}")
+        print(f"  {'Estimated value of star data (approx):':<50} {est['star_estimate']:>18,}")
 
         print("\n--- Personal Bests (trip) ---\n")
         records = st.trip_personal_records(conn, args.date_from, args.date_to)
