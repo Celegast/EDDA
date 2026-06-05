@@ -55,6 +55,7 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 - **Star-class catalogue** — per-star-class system and body statistics grouped by star type (main sequence, giants and supergiants, proto-stars, carbon stars, Wolf-Rayet, white dwarfs, neutron stars, black holes); property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and body names; most-of-class-in-system records; estimated scan value ranges per star class using the Odyssey exploration formula
 - **Species catalogue** — species grouped by genus with per-genus overview panels and per-species drill-down; first-log tracking; scan counts, estimated and actual sale values; planet-type breakdown per species; Horizons-era genera (Anemone, Brain Trees, Sinuous Tubers, Bark Mounds, Crystalline Shards, Amphora Plants) are labelled and sorted to the bottom of the list; Bark Mounds are sourced from codex entries since they are not bio-scannable
 - **Spectral distribution charts** — per-species and per-body-type line charts showing how scan counts and occurrence percentages are distributed across the detailed spectral subclass of the dominant star (G2, F5, K3, …); useful for cross-referencing community data such as the He% vs Stratum Tectonicas chart
+- **Stratum Tectonicas research report** — a self-contained dark-theme HTML research report for collaborative Stratum Tectonicas field research; queries all High Metal Content bodies with exactly one bio signal, thin atmosphere (surface pressure < 10 kPa), and surface temperature ≥ 165 K (configurable range); classifies each body as confirmed Stratum, confirmed other genus (Bacterium or oddity), or unconfirmed; report sections include: summary cards, confirmed genera breakdown, atmosphere type chart, system gas-giant He% distribution (metallicity proxy, 0.1% bins with Stratum rate overlay), physical property distributions, Pearson correlation matrices (Other / Stratum / Stratum−Other diff), scatter matrix, gravitational binding energy proxy, physical property box plots, parent star type and age charts, parent star mass, habitable zone context by star type (normalised orbital distance), primary vs companion star mass scatter, and surface materials comparison; sortable candidate table and separate oddities table (excluded from charts); auto-exports a per-commander JSONL candidate file on every run for cross-commander aggregation; a `--from-files` aggregation mode builds a combined multi-commander report from JSONL exports without requiring a database
 - **System map** — interactive canvas-based system diagram, opened by clicking any system name in the dashboard; shows all bodies in their hierarchical tree layout with scaled icons, ring indicators, first-discovered badges, terraformable highlights, rich tooltips (surface properties, bio species, ring details), a two-column icon legend, and a galaxy minimap showing the system's position relative to Sol, Colonia, and Beagle Point
 - **Clickable system links** — system and body name references throughout the dashboard (Personal Records, Property Ranges tables, Vicinity Hints) and in the query builder results table open the system map modal on click
 - **Personal Records** — top-10 lists for most bodies, most stars, most bio signals, top exobiology value, and top exploration value per system; all tables show distance to current commander position; Miscellaneous personal bests (highest/lowest gravity, hottest/coldest surface, largest/smallest radius, largest ring outer radius, longest jump)
@@ -319,6 +320,53 @@ The dashboard sections:
 | Notable Stellar Phenomena | Overview counts; interactive 3D galaxy map with colour-coded markers (category hue, subcategory lightness); FSS Detections table with catalogued NSP types as coloured tags; per-category and per-subcategory drill-down panels with new-codex-entry tracking and decoded galactic region names |
 | Boxels | Filterable, sortable list of visited boxels; per-boxel detail panel with star spectral distribution, planet breakdown (Systems / Rates / Bio Signals / Geo Signals column groups, sorted by body value, rate cells colour-coded by cross-boxel percentile), and biological species table (genus colours, Avg percentile highlighting) |
 
+### `pdm run stratum`
+
+Generates a self-contained HTML Stratum Tectonicas research report from the database.
+
+```
+pdm run stratum -- [--out FILE] [--min-temp K] [--max-temp K] [--export FILE] [--from-files PATTERN ...] [--db PATH]
+```
+
+| Flag | Description |
+|---|---|
+| `--out FILE` | Output HTML path (default: `stratum_report.html`) |
+| `--min-temp K` | Lower surface temperature bound in Kelvin (default: `165`) |
+| `--max-temp K` | Upper surface temperature bound in Kelvin (default: no upper limit) |
+| `--export FILE` | Export filtered candidates to a JSONL file and exit without building a report |
+| `--from-files PATTERN` | Build an aggregated report from one or more JSONL export files; accepts glob patterns (e.g. `stratum_candidates*.jsonl`); no database required |
+| `--db PATH` | Use a different database file |
+
+**Three usage modes:**
+
+**Default — generate report and auto-export candidates:**
+```bash
+pdm run stratum
+pdm run stratum -- --out my_stratum.html
+pdm run stratum -- --min-temp 180 --max-temp 230
+```
+Builds the HTML report and automatically writes a `stratum_candidates_<CMDR>.jsonl` file alongside it. The commander name is read from the database. Share the JSONL file with other researchers for aggregation.
+
+**Export only — produce a JSONL file without building a report:**
+```bash
+pdm run stratum -- --export stratum_candidates_MyCmdr.jsonl
+```
+Useful for generating a fresh export without overwriting an existing report.
+
+**Aggregated report — combine exports from multiple commanders:**
+```bash
+pdm run stratum -- --from-files "stratum_candidates*.jsonl" --out aggregated.html
+pdm run stratum -- --from-files cmdr1.jsonl cmdr2.jsonl cmdr3.jsonl --out aggregated.html
+```
+Loads and deduplicates all matching JSONL files (preferring confirmed over unconfirmed entries when the same body appears in multiple files), then builds a combined report. No database is needed.
+
+**Temperature range filtering:**
+
+When `--max-temp` is set, a highlighted badge is shown in the report header and subtitle to make filtered reports visually distinct:
+```bash
+pdm run stratum -- --min-temp 165 --max-temp 220   # focuses on the cooler end of the range
+```
+
 ### `pdm run serve` — Query Builder
 
 Starts a local Flask web server and opens the query builder in the browser.
@@ -472,7 +520,8 @@ src/edda/
     ├── charts.py           matplotlib and Plotly chart functions
     ├── maps.py             galaxy and sector map functions
     ├── dashboard.py        HTML dashboard assembler
-    └── trip_report.py      self-contained HTML trip report builder
+    ├── trip_report.py      self-contained HTML trip report builder
+    └── stratum_report.py   Stratum Tectonicas research report builder
 ```
 
 ## Acknowledgements

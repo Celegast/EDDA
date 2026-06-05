@@ -20,6 +20,7 @@ from .analysis import maps as mp
 from .analysis import charts as ch
 from .analysis import dashboard as db
 from .analysis import trip_report as tr
+from .analysis import stratum_report as sr
 
 
 # ---------------------------------------------------------------------------
@@ -477,5 +478,78 @@ def cmd_dashboard(argv: list[str] | None = None) -> None:
     conn = open_db(args.db)
     try:
         db.build_dashboard(conn, args.out)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# stratum — Stratum Tectonicas research report
+# ---------------------------------------------------------------------------
+
+def cmd_stratum(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="pdm run stratum",
+        description=(
+            "Build a Stratum Tectonicas research report.\n\n"
+            "Normal mode (requires --db):\n"
+            "  pdm run stratum [--min-temp K] [--max-temp K] [--out FILE]\n"
+            "  pdm run stratum --export FILE [--min-temp K] [--max-temp K]\n\n"
+            "Aggregated mode (no DB needed):\n"
+            "  pdm run stratum --from-files FILE1 [FILE2 ...] [--out FILE]"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _db_arg(parser)
+    parser.add_argument(
+        "--out", type=Path, default=Path("stratum_report.html"),
+        metavar="FILE",
+        help="Output HTML file (default: ./stratum_report.html)",
+    )
+    parser.add_argument(
+        "--min-temp", type=float, default=165.0, metavar="K",
+        help="Minimum surface temperature in K (default: 165)",
+    )
+    parser.add_argument(
+        "--max-temp", type=float, default=None, metavar="K",
+        help="Maximum surface temperature in K (default: no limit)",
+    )
+    parser.add_argument(
+        "--export", type=Path, default=None, metavar="FILE",
+        help="Export candidates to a JSONL file instead of building the report",
+    )
+    parser.add_argument(
+        "--from-files", nargs="+", type=str, metavar="PATTERN",
+        help=(
+            "Build an aggregated report from JSONL exports — accepts glob patterns, "
+            "e.g. --from-files stratum_candidates*.jsonl"
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    if args.from_files:
+        import glob as _glob
+        paths: list[Path] = []
+        for pattern in args.from_files:
+            matched = sorted(_glob.glob(pattern))
+            if not matched:
+                print(f"  Warning: no files matched '{pattern}'")
+            paths.extend(Path(p) for p in matched)
+        if not paths:
+            print("Error: no files found matching the given pattern(s).")
+            return
+        print(f"Building aggregated Stratum report from {len(paths)} file(s)...")
+        sr.build_stratum_report_from_files(paths, args.out)
+        return
+
+    conn = open_db(args.db)
+    try:
+        if args.export:
+            print("Exporting Stratum candidates...")
+            sr.export_candidates(conn, args.export,
+                                 min_temp=args.min_temp, max_temp=args.max_temp)
+        else:
+            print("Building Stratum Tectonicas report...")
+            sr.build_stratum_report(conn, args.out,
+                                    min_temp=args.min_temp, max_temp=args.max_temp)
     finally:
         conn.close()
