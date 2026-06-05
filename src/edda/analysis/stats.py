@@ -1333,6 +1333,180 @@ def boxel_he_vs_tectonicas(conn: sqlite3.Connection) -> pd.DataFrame:
     return grp
 
 
+def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
+    """
+    Return aggregate statistics per boxel for all boxels with >= min_systems visited.
+
+    A boxel is the system-name prefix after stripping the trailing -N index,
+    e.g. "Swoilz TV-B a40" for "Swoilz TV-B a40-1", "Swoilz TV-B a40-2", etc.
+    Only procedurally-named systems (containing XX-X grid code) are included.
+
+    Per-boxel data includes: primary star class distribution, all star subtypes,
+    per-planet-subtype stats (systems, TF, landable, atmosphere, bio/geo signals),
+    gas giant He% range, and biological species found.
+    """
+    from collections import defaultdict
+
+    sys_rows = conn.execute(
+        "SELECT system_address, name, star_class, first_seen_at FROM systems"
+    ).fetchall()
+
+    groups: dict[str, list] = defaultdict(list)
+    for sa, name, sc, fv in sys_rows:
+        if not _SECTOR_RE.match(name):
+            continue
+        boxel = _BOXEL_RE.sub("", name)
+        if boxel == name:
+            continue
+        groups[boxel].append({
+            "sa": sa, "n": name, "sc": sc or "", "fv": fv[:10] if fv else None,
+        })
+
+    groups = {k: v for k, v in groups.items() if len(v) >= min_systems}
+    if not groups:
+        return []
+
+    sa_to_boxel: dict[int, str] = {
+        s["sa"]: bx for bx, sl in groups.items() for s in sl
+    }
+    valid_sas = list(sa_to_boxel.keys())
+
+    # star subtype counts: [bx][subtype] = count
+    bx_stars: dict[str, dict] = defaultdict(lambda: defaultdict(int))
+    # planet stats per (bx, subtype): list[9] of ints
+    # [0]=sys_count [1]=total_bodies [2]=tf_sys [3]=land_sys [4]=atm_sys
+    # [5]=bio_total [6]=bio_sys [7]=geo_total [8]=geo_sys
+    bx_planets: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: [0] * 9))
+    # He% values for gas giants: [bx] = [he_pct, ...]
+    bx_he: dict[str, list] = defaultdict(list)
+    # bio species: [bx][species_localised] = [sys_count, genus_localised, body_count]
+    bx_species: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: [0, "", 0]))
+
+    BATCH = 500
+    for i in range(0, len(valid_sas), BATCH):
+        batch = valid_sas[i : i + BATCH]
+        ph = ",".join("?" * len(batch))
+
+        # All star subtypes
+        for sa, subtype in conn.execute(
+            f"SELECT system_address, subtype FROM bodies"
+            f" WHERE system_address IN ({ph}) AND body_type='Star' AND subtype IS NOT NULL",
+            batch,
+        ):
+            bx = sa_to_boxel.get(sa)
+            if bx:
+                bx_stars[bx][subtype] += 1
+
+        # Planets aggregated per (system, subtype) — gives per-system presence flags
+        for sa, subtype, has_tf, has_land, has_atm, bio, has_bio, geo, has_geo, cnt in conn.execute(
+            f"""SELECT system_address, subtype,
+                MAX(CASE WHEN terraform_state NOT IN ('','Not terraformable')
+                         AND terraform_state IS NOT NULL THEN 1 ELSE 0 END),
+                MAX(COALESCE(is_landable,0)),
+                MAX(CASE WHEN atmosphere_type NOT IN ('','None')
+                         AND atmosphere_type IS NOT NULL THEN 1 ELSE 0 END),
+                COALESCE(SUM(bio_signals),0),
+                MAX(CASE WHEN COALESCE(bio_signals,0)>0 THEN 1 ELSE 0 END),
+                COALESCE(SUM(geo_signals),0),
+                MAX(CASE WHEN COALESCE(geo_signals,0)>0 THEN 1 ELSE 0 END),
+                COUNT(*)
+                FROM bodies
+                WHERE system_address IN ({ph}) AND body_type='Planet' AND subtype IS NOT NULL
+                GROUP BY system_address, subtype""",
+            batch,
+        ):
+            bx = sa_to_boxel.get(sa)
+            if not bx:
+                continue
+            p = bx_planets[bx][subtype]
+            p[0] += 1; p[1] += cnt; p[2] += has_tf; p[3] += has_land; p[4] += has_atm
+            p[5] += bio; p[6] += has_bio; p[7] += geo; p[8] += has_geo
+
+        # Gas giant He% for metallicity range
+        for sa, he_pct in conn.execute(
+            f"""SELECT system_address, atmosphere_he_pct FROM bodies
+                WHERE system_address IN ({ph}) AND body_type='Planet'
+                AND LOWER(subtype) LIKE '%gas giant%' AND atmosphere_he_pct > 0""",
+            batch,
+        ):
+            bx = sa_to_boxel.get(sa)
+            if bx:
+                bx_he[bx].append(he_pct)
+
+        # Biological species (one entry per system per species; cnt = bodies scanned)
+        for sa, species, genus, cnt in conn.execute(
+            f"""SELECT system_address, species_localised, genus_localised, COUNT(*)
+                FROM organic_scans
+                WHERE system_address IN ({ph}) AND scan_state='Analyse'
+                GROUP BY system_address, species_localised""",
+            batch,
+        ):
+            bx = sa_to_boxel.get(sa)
+            if bx and species:
+                sp = bx_species[bx][species]
+                sp[0] += 1
+                sp[2] += cnt
+                if genus and not sp[1]:
+                    sp[1] = genus
+
+    results = []
+    for bx, sys_list in groups.items():
+        sc_dist: dict[str, int] = defaultdict(int)
+        for s in sys_list:
+            if s["sc"]:
+                sc_dist[s["sc"]] += 1
+
+        stars = dict(sorted(bx_stars.get(bx, {}).items(), key=lambda x: -x[1]))
+
+        planets = {
+            st: {
+                "sys": p[0], "cnt": p[1],
+                "tf": p[2], "land": p[3], "atm": p[4],
+                "bio": p[5], "bio_s": p[6],
+                "geo": p[7], "geo_s": p[8],
+            }
+            for st, p in sorted(
+                bx_planets.get(bx, {}).items(), key=lambda x: -x[1][1]
+            )
+        }
+
+        species_out = [
+            {"sp": sp, "genus": d[1], "sys": d[0], "cnt": d[2]}
+            for sp, d in sorted(bx_species.get(bx, {}).items(), key=lambda x: -x[1][0])
+        ]
+
+        he_vals = bx_he.get(bx, [])
+        dates   = [s["fv"] for s in sys_list if s["fv"]]
+
+        elw = planets.get("Earthlike body", {}).get("cnt", 0)
+        ww  = planets.get("Water world",   {}).get("cnt", 0)
+        aw  = planets.get("Ammonia world", {}).get("cnt", 0)
+        tf  = sum(v["tf"]  for v in planets.values())
+        bio = sum(v["bio"] for v in planets.values())
+        geo = sum(v["geo"] for v in planets.values())
+
+        results.append({
+            "n":      bx,
+            "cnt":    len(sys_list),
+            "sc":     dict(sc_dist),
+            "stars":  stars,
+            "planets": planets,
+            "species": species_out,
+            "tf":     tf,
+            "elw":    elw,
+            "ww":     ww,
+            "aw":     aw,
+            "bio":    bio,
+            "geo":    geo,
+            "he":     [round(min(he_vals), 1), round(max(he_vals), 1)] if he_vals else None,
+            "fv":     min(dates) if dates else None,
+            "lv":     max(dates) if dates else None,
+        })
+
+    results.sort(key=lambda x: -x["cnt"])
+    return results
+
+
 def systems_for_map(conn: sqlite3.Connection) -> pd.DataFrame:
     """All systems with coords — used for galaxy maps."""
     sql = """

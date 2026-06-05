@@ -492,6 +492,53 @@ section h2 {
 }
 .sys-link:hover { color: #bbddff; }
 /* END_SYS_MODAL_CSS */
+
+/* ---- Boxels ---- */
+.bx-controls { display:flex; align-items:center; gap:1em; margin-bottom:0.8em; flex-wrap:wrap; }
+.bx-controls label { color:#8899cc; font-size:0.9em; }
+.bx-controls input[type="number"] { width:4em; }
+.bx-controls input[type="text"] { width:14em; }
+#bx-count { color:#6677aa; font-size:0.88em; }
+.bx-sort-btns { display:flex; gap:0.3em; margin-left:0.5em; }
+.bx-sort-btn { padding:0.15em 0.55em; background:#161625; border:1px solid #334;
+    color:#8899cc; border-radius:3px; cursor:pointer; font-size:0.82em; }
+.bx-sort-btn.active { background:#1e2244; border-color:#5566aa; color:#aabbee; }
+.bx-sort-btn:hover:not(.active) { background:#1a1c2e; }
+.bx-layout { display:grid; grid-template-columns:minmax(200px,280px) 1fr; gap:1em; }
+.bx-list { overflow-y:auto; max-height:870px; border:1px solid #1e2240; border-radius:4px; }
+.bx-item { padding:0.4em 0.65em; cursor:pointer; border-bottom:1px solid #141628;
+    display:grid; grid-template-columns:1fr auto; grid-template-rows:auto auto; gap:0 0.4em; }
+.bx-item:hover { background:#1a1c30; }
+.bx-item.active { background:#1e2244; border-left:2px solid #5566aa; }
+.bx-name { color:#aabbee; font-size:0.88em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bx-cnt { color:#667; font-size:0.82em; text-align:right; }
+.bx-sc { color:#5566aa; font-size:0.76em; grid-column:1; }
+.bx-hi { color:#6688bb; font-size:0.76em; grid-column:1/3; }
+.bx-detail { border:1px solid #1e2240; border-radius:4px; padding:1em;
+    overflow-y:auto; max-height:870px; }
+.bx-detail-header { display:flex; align-items:baseline; gap:0.8em; margin-bottom:0.75em; flex-wrap:wrap; }
+.bx-detail-header h3 { margin:0; color:#c8d8ff; font-size:1.05em; }
+.bx-detail-cnt { color:#667; font-size:0.88em; }
+.bx-dates { color:#5566aa; font-size:0.82em; }
+.bx-badges { display:flex; flex-wrap:wrap; gap:0.4em; margin-bottom:1em; }
+.bx-badge { display:inline-flex; border:1px solid #252840; border-radius:3px; overflow:hidden; font-size:0.8em; }
+.bx-badge-lbl { padding:0.2em 0.4em; background:#1a1c2e; color:#6677aa; }
+.bx-badge-val { padding:0.2em 0.5em; background:#0f1020; color:#99aadd; font-weight:600; }
+.bx-detail-cols { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:1.2em; margin-bottom:1.2em; }
+.bx-sys-list { font-size:0.82em; color:#8899cc; }
+.bx-sys-list td, .bx-sys-list th { padding:4px 9px; }
+.bx-sys-list tr:hover td { background:#1a1c30; }
+.bx-sys-list th.grp { background:#151728; color:#7788bb; font-size:0.92em; font-weight:600; text-align:center; border-bottom:1px solid #252840; }
+.bx-sys-list th.grp-sep, .bx-sys-list td.grp-sep { border-left:2px solid #252840; padding-left:0.9em; }
+.bx-sys-list td.hi-2 { color:#c8a84a; }
+.bx-sys-list td.hi-3 { color:#7dca8a; }
+.bx-sys-list td.hi-4 { color:#4de86a; font-weight:600; }
+.bx-star-chart { margin:0.4em 0 1em; }
+.bx-star-row { display:flex; align-items:center; gap:0.5em; margin-bottom:0.25em; font-size:0.8em; }
+.bx-star-lbl { color:#8899cc; width:9em; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bx-star-bar-wrap { flex:1; background:#131420; border-radius:2px; overflow:hidden; height:12px; }
+.bx-star-bar { height:100%; border-radius:2px; background:#5577cc; }
+.bx-star-val { color:#667; width:2.5em; text-align:right; flex-shrink:0; }
 """
 
 
@@ -1418,6 +1465,356 @@ function _drawSys() {
     });
 // END_SYS_DIAGRAM
 }());
+
+// ---- Boxels ----
+(function () {
+    var _bxSort = 'cnt';
+    var _bxSel  = null;
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function _bxVisible() {
+        var min = parseInt(document.getElementById('bx-min').value, 10) || 1;
+        var q   = (document.getElementById('bx-search').value || '').toLowerCase();
+        var list = (window.BOXEL_DATA || []).filter(function(b) {
+            return b.cnt >= min && (!q || b.n.toLowerCase().indexOf(q) >= 0);
+        });
+        if (_bxSort === 'name') list.sort(function(a, b) { return a.n.localeCompare(b.n); });
+        else if (_bxSort === 'fv') list.sort(function(a, b) { return (a.fv||'').localeCompare(b.fv||''); });
+        // default 'cnt': already sorted descending from Python
+        return list;
+    }
+
+    function _bxRender() {
+        var list = _bxVisible();
+        var total = list.reduce(function(s, b) { return s + b.cnt; }, 0);
+        document.getElementById('bx-count').textContent =
+            list.length + ' boxels · ' + total + ' systems';
+
+        var el = document.getElementById('bx-list');
+        el.innerHTML = '';
+        if (!list.length) {
+            el.innerHTML = '<p class="empty-note" style="padding:1em">No boxels match the filter.</p>';
+            return;
+        }
+        list.forEach(function(bx) {
+            var div = document.createElement('div');
+            div.className = 'bx-item' + (_bxSel === bx.n ? ' active' : '');
+
+            var sc = Object.entries(bx.sc)
+                .sort(function(a, b) { return b[1] - a[1]; })
+                .slice(0, 4).map(function(e) { return e[0] + '(' + e[1] + ')'; }).join(' ');
+
+            var hi = [];
+            if (bx.elw) hi.push(bx.elw + ' ELW');
+            if (bx.ww)  hi.push(bx.ww  + ' WW');
+            if (bx.aw)  hi.push(bx.aw  + ' AW');
+            if (bx.tf)  hi.push(bx.tf  + ' TF');
+            if (bx.bio) hi.push(bx.bio + ' bio');
+
+            div.innerHTML =
+                '<span class="bx-name">' + esc(bx.n) + '</span>'
+                + '<span class="bx-cnt">' + bx.cnt + '</span>'
+                + (sc ? '<span class="bx-sc">' + esc(sc) + '</span>' : '')
+                + (hi.length ? '<span class="bx-hi">' + hi.join(' · ') + '</span>' : '');
+
+            div.addEventListener('click', function() {
+                _bxSel = bx.n;
+                _bxRender();
+                _bxDetail(bx);
+            });
+            el.appendChild(div);
+        });
+
+        if (_bxSel) {
+            var found = list.filter(function(b) { return b.n === _bxSel; })[0];
+            if (!found) { _bxSel = null; document.getElementById('bx-detail').innerHTML = '<p class="empty-note">Select a boxel to see details.</p>'; }
+        }
+    }
+
+    function _badge(lbl, val) {
+        if (!val && val !== 0) return '';
+        if (val === 0) return '';
+        return '<span class="bx-badge"><span class="bx-badge-lbl">' + esc(lbl) + '</span>'
+             + '<span class="bx-badge-val">' + esc(val) + '</span></span>';
+    }
+
+    function _table(headers, rows) {
+        if (!rows.length) return '<p class="empty-note" style="font-size:0.82em">—</p>';
+        return '<table class="data-table bx-sys-list"><tr>'
+            + headers.map(function(h) { return '<th>' + esc(h) + '</th>'; }).join('')
+            + '</tr>'
+            + rows.map(function(r) {
+                return '<tr>' + r.map(function(c) { return '<td>' + esc(c == null ? '' : c) + '</td>'; }).join('') + '</tr>';
+            }).join('')
+            + '</table>';
+    }
+
+    function _oneIn(sys, total) {
+        if (!sys || !total) return '—';
+        var r = total / sys;
+        return r < 1.05 ? 'every' : '1 in ' + r.toFixed(1);
+    }
+
+    // Genus → colour: same 24-colour palette as the Exobiology 3D map, fixed per genus
+    var _GENUS_COL = (function() {
+        var P = ['#2E91E5','#E15F99','#1CA71C','#FB0D0D','#DA16FF',
+                 '#B68100','#750D86','#EB663B','#511CFB','#00A08B',
+                 '#FB00D1','#FC0080','#B2828D','#6C7C32','#778AAE',
+                 '#862A16','#A777F1','#620042','#1616A7','#DA60CA',
+                 '#6C4516','#0D2A63','#AF0038','#888888'];
+        var G = ['aleoida','bacterium','cactoida','clypeus','concha',
+                 'electricae','fonticulua','frutexa','fumerola','fungoida',
+                 'osseus','recepta','sinuous','stratum','tubus','tussock',
+                 'aeternitas','amphora','anemone','bark','brain','crystalLine','lasso','vents'];
+        var m = {};
+        G.forEach(function(g, i) { m[g] = P[i]; });
+        return m;
+    }());
+
+    function _spColor(name) {
+        if (!name) return '#8899cc';
+        var g = name.split(' ')[0].toLowerCase();
+        return _GENUS_COL[g] || '#8899cc';
+    }
+
+    // Per body-type/species, per-attribute percentile thresholds from all BOXEL_DATA
+    var _pctTh = null;    // { type: { freq, tf, land, atm, bio } } each = [p33, p67, p90]
+    var _pctThSp = null;  // { species: [p33, p67, p90] }
+
+    function _computePctThresholds() {
+        var rawPl = {}, rawSp = {};
+        BOXEL_DATA.forEach(function(bx) {
+            var tot = bx.cnt;
+            Object.entries(bx.planets || {}).forEach(function(kv) {
+                var tn = kv[0], pl = kv[1];
+                if (!rawPl[tn]) rawPl[tn] = {freq:[],tf:[],land:[],atm:[],bio:[]};
+                var d = rawPl[tn];
+                if (tot > 0 && pl.sys > 0) d.freq.push(pl.sys / tot);
+                if (pl.sys > 0) {
+                    if (pl.tf)    d.tf.push(pl.tf    / pl.sys);
+                    if (pl.land)  d.land.push(pl.land / pl.sys);
+                    if (pl.atm)   d.atm.push(pl.atm  / pl.sys);
+                    if (pl.bio_s) d.bio.push(pl.bio_s / pl.sys);
+                }
+            });
+            (bx.species || []).forEach(function(s) {
+                if (!rawSp[s.sp]) rawSp[s.sp] = [];
+                if (tot > 0 && s.sys > 0) rawSp[s.sp].push(s.sys / tot);
+            });
+        });
+
+        function pts(arr) {
+            if (!arr.length) return null;
+            var a = arr.slice().sort(function(x, y) { return x - y; });
+            function pv(q) { return a[Math.min(Math.floor(a.length * q), a.length - 1)]; }
+            return [pv(0.33), pv(0.67), pv(0.90)];
+        }
+
+        _pctTh = {};
+        Object.entries(rawPl).forEach(function(kv) {
+            var tn = kv[0], d = kv[1];
+            _pctTh[tn] = { freq: pts(d.freq), tf: pts(d.tf), land: pts(d.land), atm: pts(d.atm), bio: pts(d.bio) };
+        });
+
+        _pctThSp = {};
+        Object.entries(rawSp).forEach(function(kv) {
+            _pctThSp[kv[0]] = pts(kv[1]);
+        });
+    }
+
+    function _pctCls(ratio, thArr) {
+        if (!ratio || !thArr) return '';
+        if (ratio >= thArr[2]) return 'hi-4';
+        if (ratio >= thArr[1]) return 'hi-3';
+        if (ratio >= thArr[0]) return 'hi-2';
+        return '';
+    }
+
+    function _pctClass(ratio, type, attr) {
+        if (!_pctTh) return '';
+        var th = _pctTh[type];
+        return th ? _pctCls(ratio, th[attr]) : '';
+    }
+
+    function _spPctClass(sys, total, spName) {
+        if (!_pctThSp || !sys || !total) return '';
+        return _pctCls(sys / total, _pctThSp[spName]);
+    }
+
+    function _starChart(stars) {
+        var entries = Object.entries(stars || {});
+        if (!entries.length) return '<p class="empty-note" style="font-size:0.82em">—</p>';
+        var total = entries.reduce(function(s, e) { return s + e[1]; }, 0);
+        // order by spectral class prefix: O B A F G K M L T Y W then rest
+        var ORDER = ['O','B','A','F','G','K','M','L','T','Y','W','N','D','C','S'];
+        entries.sort(function(a, b) {
+            var ia = ORDER.findIndex(function(o) { return a[0].toUpperCase().startsWith(o); });
+            var ib = ORDER.findIndex(function(o) { return b[0].toUpperCase().startsWith(o); });
+            if (ia < 0) ia = 99;
+            if (ib < 0) ib = 99;
+            return ia !== ib ? ia - ib : b[1] - a[1];
+        });
+        // spectral class colour palette (approximate)
+        var COLORS = {O:'#9bb4ff',B:'#aabfff',A:'#cdd4ff',F:'#f2f2ff',G:'#fff4c2',K:'#ffd27c',
+                      M:'#ff9966',L:'#cc5533',T:'#883311',Y:'#553300',W:'#cceeee',N:'#886699',
+                      D:'#aaaacc',C:'#668844',S:'#aa6622'};
+        function barColor(name) {
+            var key = Object.keys(COLORS).find(function(k) { return name.toUpperCase().startsWith(k); });
+            return key ? COLORS[key] : '#5577cc';
+        }
+        var max = entries[0] ? Math.max.apply(null, entries.map(function(e){return e[1];})) : 1;
+        return '<div class="bx-star-chart">'
+            + entries.map(function(e) {
+                var pct = Math.round(e[1] / max * 100);
+                var share = (e[1] / total * 100).toFixed(1);
+                return '<div class="bx-star-row">'
+                    + '<span class="bx-star-lbl" title="' + esc(e[0]) + '">' + esc(e[0]) + '</span>'
+                    + '<div class="bx-star-bar-wrap">'
+                    + '<div class="bx-star-bar" style="width:' + pct + '%;background:' + barColor(e[0]) + '"></div>'
+                    + '</div>'
+                    + '<span class="bx-star-val">' + share + '%</span>'
+                    + '</div>';
+            }).join('')
+            + '</div>';
+    }
+
+    var _PLANET_ORDER = [
+        'Earthlike body','Water world','Ammonia world',
+        'High metal content body','Rocky body','Metal rich body',
+        'Sudarsky class I gas giant','Sudarsky class II gas giant',
+        'Sudarsky class III gas giant','Sudarsky class IV gas giant','Sudarsky class V gas giant',
+        'Gas giant with water based life','Gas giant with ammonia based life',
+        'Helium rich gas giant','Helium gas giant',
+        'Water giant','Icy body','Rocky ice body'
+    ];
+
+    function _planetOrder(name) {
+        var idx = _PLANET_ORDER.findIndex(function(t) { return t.toLowerCase() === name.toLowerCase(); });
+        return idx < 0 ? 999 : idx;
+    }
+
+    function _planetTable(planets, total) {
+        var entries = Object.entries(planets || {});
+        if (!entries.length) return '<p class="empty-note" style="font-size:0.82em">—</p>';
+        entries.sort(function(a, b) { return _planetOrder(a[0]) - _planetOrder(b[0]); });
+
+        function cell(val, cls) {
+            return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(val == null ? '—' : val) + '</td>';
+        }
+        function gsep(val, cls) {
+            var c = cls ? 'grp-sep ' + cls : 'grp-sep';
+            return '<td class="' + c + '">' + esc(val == null ? '—' : val) + '</td>';
+        }
+        function pct(num, denom) {
+            if (!num || !denom) return null;
+            return (num / denom * 100).toFixed(0) + '%';
+        }
+        var rows = entries.map(function(e) {
+            var t = e[0], p = e[1];
+            var freqR = (total > 0 && p.sys > 0) ? p.sys / total       : 0;
+            var tfR   = (p.sys > 0 && p.tf)      ? p.tf    / p.sys     : 0;
+            var landR = (p.sys > 0 && p.land)     ? p.land  / p.sys    : 0;
+            var atmR  = (p.sys > 0 && p.atm)      ? p.atm   / p.sys    : 0;
+            var bioR  = (p.sys > 0 && p.bio_s)    ? p.bio_s / p.sys    : 0;
+            return '<tr>'
+                + '<td style="color:' + _planetCol(t, false) + '">' + esc(t) + '</td>'
+                + cell(p.sys)
+                + cell(_oneIn(p.sys, total), _pctClass(freqR, t, 'freq'))
+                + cell(p.cnt)
+                + gsep(pct(p.tf,   p.sys), _pctClass(tfR,   t, 'tf'))
+                + cell(pct(p.land, p.sys), _pctClass(landR, t, 'land'))
+                + cell(pct(p.atm,  p.sys), _pctClass(atmR,  t, 'atm'))
+                + cell(pct(p.bio_s,p.sys), _pctClass(bioR,  t, 'bio'))
+                + gsep(p.bio_s || null)
+                + cell(p.bio   || null)
+                + gsep(p.geo_s || null)
+                + cell(p.geo   || null)
+                + '</tr>';
+        }).join('');
+
+        return '<table class="data-table bx-sys-list">'
+            + '<tr>'
+            + '<th rowspan="2">Type</th>'
+            + '<th colspan="3" class="grp">Systems</th>'
+            + '<th colspan="4" class="grp grp-sep">Rates</th>'
+            + '<th colspan="2" class="grp grp-sep">Bio Signals</th>'
+            + '<th colspan="2" class="grp grp-sep">Geo Signals</th>'
+            + '</tr>'
+            + '<tr>'
+            + '<th># sys</th><th>Avg</th><th>bodies</th>'
+            + '<th class="grp-sep">TF</th><th>Land</th><th>Atm</th><th>Bio</th>'
+            + '<th class="grp-sep">sys</th><th>total</th>'
+            + '<th class="grp-sep">sys</th><th>total</th>'
+            + '</tr>'
+            + rows
+            + '</table>';
+    }
+
+    function _bxDetail(bx) {
+        var el = document.getElementById('bx-detail');
+
+        var spHtml = '';
+        if ((bx.species || []).length) {
+            var spTbl = '<table class="data-table bx-sys-list">'
+                + '<tr><th>Species</th><th>Systems</th><th>Avg</th><th>Bodies</th></tr>'
+                + bx.species.map(function(s) {
+                    var cls = _spPctClass(s.sys, bx.cnt, s.sp);
+                    return '<tr>'
+                        + '<td style="color:' + _spColor(s.sp) + '">' + esc(s.sp) + '</td>'
+                        + '<td>' + s.sys + '</td>'
+                        + '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + _oneIn(s.sys, bx.cnt) + '</td>'
+                        + '<td>' + (s.cnt || '—') + '</td>'
+                        + '</tr>';
+                }).join('')
+                + '</table>';
+            spHtml = '<p class="col-head" style="margin-top:1.1em">Biological species</p>' + spTbl;
+        }
+
+        el.innerHTML =
+            '<div class="bx-detail-header">'
+            + '<h3>' + esc(bx.n) + '</h3>'
+            + '<span class="bx-detail-cnt">' + bx.cnt + ' systems</span>'
+            + (bx.fv ? '<span class="bx-dates">' + esc(bx.fv) + ' – ' + esc(bx.lv || bx.fv) + '</span>' : '')
+            + '</div>'
+            + '<div class="bx-badges">'
+            + _badge('ELW', bx.elw) + _badge('Water world', bx.ww) + _badge('Ammonia world', bx.aw)
+            + _badge('Terraformable', bx.tf)
+            + _badge('Bio signals', bx.bio) + _badge('Geo signals', bx.geo)
+            + (bx.he ? _badge('GG He%', bx.he[0] + '–' + bx.he[1] + '%') : '')
+            + '</div>'
+            + '<p class="col-head">Star spectral distribution</p>'
+            + _starChart(bx.stars)
+            + '<p class="col-head" style="margin-top:1.1em">Planet breakdown</p>'
+            + _planetTable(bx.planets, bx.cnt)
+            + spHtml;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var minEl    = document.getElementById('bx-min');
+        var searchEl = document.getElementById('bx-search');
+        if (!minEl) return;
+
+        _computePctThresholds();
+
+        minEl.addEventListener('input', _bxRender);
+        searchEl.addEventListener('input', _bxRender);
+
+        document.querySelectorAll('.bx-sort-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                _bxSort = btn.dataset.sort;
+                document.querySelectorAll('.bx-sort-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                _bxRender();
+            });
+        });
+
+        _bxRender();
+    });
+}());
 """
 
 
@@ -1496,6 +1893,7 @@ _HTML_TEMPLATE = """\
 {sections}
   </main>
   <script>__SYS_DATA_PLACEHOLDER__</script>
+  <script>__BOXEL_DATA_PLACEHOLDER__</script>
   <script>
 {js}
   </script>
@@ -3066,6 +3464,28 @@ def _build_star_section(star_df: pd.DataFrame, cur_pos: dict | None = None,
     return f'<div class="detail-layout">{list_block}{content_block}</div>'
 
 
+def _build_boxels_section() -> str:
+    """Static shell for the Boxels section — content rendered by JS from BOXEL_DATA."""
+    return (
+        '<div class="bx-controls">'
+        '<label>Min systems&nbsp;<input type="number" id="bx-min" value="5" min="1" max="9999"></label>'
+        '<input type="text" id="bx-search" placeholder="Filter by name…">'
+        '<span class="bx-sort-btns">'
+        '<button class="bx-sort-btn active" data-sort="cnt">Count▾</button>'
+        '<button class="bx-sort-btn" data-sort="name">Name</button>'
+        '<button class="bx-sort-btn" data-sort="fv">Date</button>'
+        '</span>'
+        '<span id="bx-count"></span>'
+        '</div>'
+        '<div class="bx-layout">'
+        '<div class="bx-list" id="bx-list"></div>'
+        '<div class="bx-detail" id="bx-detail">'
+        '<p class="empty-note">Select a boxel to see details.</p>'
+        '</div>'
+        '</div>'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dashboard builder
 # ---------------------------------------------------------------------------
@@ -3359,6 +3779,13 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     ))
 
     # ------------------------------------------------------------------
+    # Boxels
+    # ------------------------------------------------------------------
+    print("  Boxels...")
+    boxel_data = st.boxels_data(conn, min_systems=2)
+    sections.append(_section("boxels", "Boxels", _build_boxels_section()))
+
+    # ------------------------------------------------------------------
     # Assemble
     # ------------------------------------------------------------------
     print("  Assembling HTML...")
@@ -3375,6 +3802,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         ("body-cat",    "Body-type Catalogue"),
         ("star-cat",    "Star-class Catalogue"),
         ("nsp",         "Notable Stellar Phenomena"),
+        ("boxels",      "Boxels"),
     ]
     nav_html = "\n".join(
         f'    <a href="#{sid}">{label}</a>' for sid, label in nav_items
@@ -3398,6 +3826,9 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
 
     sys_data_js = "var SYSTEM_DATA = " + json.dumps(diagram_data, separators=(",", ":")) + ";"
     html = html.replace("__SYS_DATA_PLACEHOLDER__", sys_data_js)
+
+    boxel_data_js = "var BOXEL_DATA = " + json.dumps(boxel_data, separators=(",", ":")) + ";"
+    html = html.replace("__BOXEL_DATA_PLACEHOLDER__", boxel_data_js)
 
     out_path.write_text(html, encoding="utf-8")
     size_mb = out_path.stat().st_size / 1_048_576
