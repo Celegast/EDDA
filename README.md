@@ -32,6 +32,10 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 ![Notable Stellar Phenomena section with 3D map, FSS detections table, and per-type catalogues](docs/screenshots/notable-stellar-phenomena.png)
 
+**Boxels**
+
+![Boxels section showing per-boxel aggregate stats with star spectral distribution, planet breakdown, and biological species](docs/screenshots/boxels.png)
+
 **Query Builder**
 
 ![Query Builder — browser-based SQL query builder with condition editor, history panel, and results table](docs/screenshots/query-builder.png)
@@ -41,13 +45,14 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 
 - **Journal importer** — incrementally processes Elite Dangerous journal files; resumes partially-imported files (e.g. when the game was open during import) without duplicating data; idempotent re-runs skip already-imported files
 - **Exploration statistics** — system counts, jump distance, first discoveries, mapping stats
-- **Trip report** — scoped statistics for a date range with optional self-contained HTML report; includes daily earnings chart, Cr/active-hour chart with rolling average, sortable tables, interactive 3D route map, and clickable system-map links; Powerplay bonuses (Antal exobiology, Li Yong-Rui exploration) are applied automatically from the most recent merit record in the database
+- **Trip report** — scoped statistics for a date range with optional self-contained HTML report; includes daily earnings chart, Cr/active-hour chart with rolling average, sortable tables, interactive 3D route map, and clickable system-map links; Powerplay bonuses (Antal exobiology, Li Yong-Rui exploration) are applied automatically from the most recent merit record in the database; Powerplay merit and control-point estimates derived from earnings (exploration and exobiology conversion rates) are shown as summary cards and a two-row interactive chart (daily merits stacked by source with cumulative merits/CPs, and merits per active hour with rolling average)
 - **Galaxy maps** — interactive 3D Plotly maps oriented with Sol in front and Colonia to the left, scaled to true in-game galaxy dimensions; static PNG variants for density, bio signals, and first discoveries; all interactive maps include a toggleable galactic-region overlay with independently switchable region boundaries and region labels
 - **Sector heat maps** — 1200 ly cube grid coloured by system density; the interactive 3D version combines four legend-toggleable data layers in a single figure: system density (heat map), terraformable rate, Earth-like rate, and bio-signal rate per visited system; switching layers updates the chart title and preserves region/landmark visibility
 - **Exobiology charts** — species distribution, value breakdown by planet type, 3D species bubble maps, and a He% vs Stratum Tectonicas probability chart (mirrors the community "Boxel Helium vs Tectonicas" chart)
 - **Boxel analytics** — He% vs average system exploration value chart; identifies He% ranges associated with high-value boxels (>3.5 MCr average)
+- **Boxels section** — filterable, sortable list of all visited boxels (min-systems threshold, name search, sort by systems / ELW / water worlds / bio signals); per-boxel detail panel with: summary badges (ELW, Water World, Ammonia World, Terraformable, Bio/Geo signal totals, GG He% range, first/last visit dates); star spectral distribution bar chart ordered by spectral class with per-class colours; planet breakdown table with column groups (Systems, Rates, Bio Signals, Geo Signals) sorted by body value with rate cells colour-coded by percentile rank across all boxels; biological species table with genus colours matching the Exobiology 3D map palette and per-species Avg colour-coded by frequency percentile
 - **Body value catalogue** — per-body estimated exploration credit value using the Odyssey formula, with correct terraforming bonus handling for Earthlike bodies and Water Worlds; property ranges (gravity, temperature, radius, Earth masses, surface pressure, ring outer radius — min/avg/max with body names) and most-of-type-in-system records per planet type
-- **Star-class catalogue** — per-star-class system and body statistics grouped by star type (main sequence, giants and supergiants, proto-stars, carbon stars, Wolf-Rayet, white dwarfs, neutron stars, black holes); property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and body names; most-of-class-in-system records
+- **Star-class catalogue** — per-star-class system and body statistics grouped by star type (main sequence, giants and supergiants, proto-stars, carbon stars, Wolf-Rayet, white dwarfs, neutron stars, black holes); property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and body names; most-of-class-in-system records; estimated scan value ranges per star class using the Odyssey exploration formula
 - **Species catalogue** — species grouped by genus with per-genus overview panels and per-species drill-down; first-log tracking; scan counts, estimated and actual sale values; planet-type breakdown per species; Horizons-era genera (Anemone, Brain Trees, Sinuous Tubers, Bark Mounds, Crystalline Shards, Amphora Plants) are labelled and sorted to the bottom of the list; Bark Mounds are sourced from codex entries since they are not bio-scannable
 - **Spectral distribution charts** — per-species and per-body-type line charts showing how scan counts and occurrence percentages are distributed across the detailed spectral subclass of the dominant star (G2, F5, K3, …); useful for cross-referencing community data such as the He% vs Stratum Tectonicas chart
 - **System map** — interactive canvas-based system diagram, opened by clicking any system name in the dashboard; shows all bodies in their hierarchical tree layout with scaled icons, ring indicators, first-discovered badges, terraformable highlights, rich tooltips (surface properties, bio species, ring details), a two-column icon legend, and a galaxy minimap showing the system's position relative to Sol, Colonia, and Beagle Point
@@ -245,7 +250,7 @@ Terminal output:
 
 Produces a self-contained HTML file with:
 
-- **Overview cards** — total estimated exploration value (with Li Yong-Rui bonus if applicable), total estimated exobiology value (with Antal bonus), sold exploration credits, and sold exobiology credits; Powerplay bonuses are applied automatically from the most recent `powerplay_merits` record in the database and displayed as a badge in the page header
+- **Overview cards** — total estimated exploration value (with Li Yong-Rui bonus if applicable), total estimated exobiology value (with Antal bonus), sold exploration credits, and sold exobiology credits; Powerplay bonuses are applied automatically from the most recent `powerplay_merits` record in the database and displayed as a badge in the page header; estimated Powerplay merits, control points, and per-active-hour rates are shown as additional summary cards
 - **Daily earnings chart** — stacked bars (exploration + exobiology) per day with a cumulative total line; subtitle shows the overall trip total
 - **Cr / active hour chart** — per-day earnings divided by detected active play time (sessions separated by gaps > 30 minutes, with a 10-minute tail buffer each), a 3-day rolling mean, and a dotted horizontal line at the overall average
 - **Exobiology samples table** — sortable; columns: Qty, Species, Base Value (per scan), With first-log (×5), Total (incl. any Powerplay bonus); grand-total footer row
@@ -253,6 +258,7 @@ Produces a self-contained HTML file with:
 - **Planet-type breakdown table** — sortable by type, count, first-discovered, first-mapped, or value
 - **Personal bests table** — highest/lowest gravity, hottest/coldest surface, largest/smallest radius, longest jump, largest ring; body and system names are clickable links
 - **Interactive 3D route map** — all visited systems plotted in true galactic coordinates, coloured by estimated system value; click any point to open the system-map modal
+- **Powerplay Estimates chart** — two-row interactive chart: daily merits stacked by source (exploration + exobiology) with cumulative merits and control points on a secondary axis; merits per active hour bars with a 3-day rolling average and overall-average reference lines; conversion rates: exploration 8,200 Cr/merit / 17,000 Cr/CP, exobiology 107,000 Cr/merit / 222,000 Cr/CP
 - **System map modal** — same interactive canvas diagram as the main dashboard; shows the full body hierarchy with tooltips, first-discovery badges, bio species, ring details, and a galaxy minimap
 
 ### `pdm run map`
@@ -311,6 +317,7 @@ The dashboard sections:
 | Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure, ring outer radius) with min/avg/max and body names (clickable); most bodies of that type in one system (clickable); sortable detail table with distance to commander; spectral distribution chart per body type |
 | Star-class Catalogue | Stars grouped by type; per-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
 | Notable Stellar Phenomena | Overview counts; interactive 3D galaxy map with colour-coded markers (category hue, subcategory lightness); FSS Detections table with catalogued NSP types as coloured tags; per-category and per-subcategory drill-down panels with new-codex-entry tracking and decoded galactic region names |
+| Boxels | Filterable, sortable list of visited boxels; per-boxel detail panel with star spectral distribution, planet breakdown (Systems / Rates / Bio Signals / Geo Signals column groups, sorted by body value, rate cells colour-coded by cross-boxel percentile), and biological species table (genus colours, Avg percentile highlighting) |
 
 ### `pdm run serve` — Query Builder
 
@@ -374,6 +381,7 @@ Clicking any system name in the dashboard opens a modal with an interactive syst
 - **Gold star badge** (★) above the icon marks bodies that were first discovered by the commander
 - **Green labels** highlight terraformable bodies; yellow labels are used otherwise
 - **Tooltips** appear on hover and include: body type, subtype, distance, temperature, gravity, atmosphere, bio signal count with species names, and ring details
+- **First-visit date** is shown in the modal header alongside the star class, if available
 - **Legend** at the bottom explains all icon decorations
 - **Galaxy minimap** alongside the legend shows the system's position in the galaxy with Sol, Colonia, and Beagle Point as reference points
 
