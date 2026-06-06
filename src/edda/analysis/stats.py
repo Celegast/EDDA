@@ -1373,10 +1373,11 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
 
     # star subtype counts: [bx][subtype] = count
     bx_stars: dict[str, dict] = defaultdict(lambda: defaultdict(int))
-    # planet stats per (bx, subtype): list[9] of ints
+    # planet stats per (bx, subtype): list[13] of ints
     # [0]=sys_count [1]=total_bodies [2]=tf_sys [3]=land_sys [4]=atm_sys
-    # [5]=bio_total [6]=bio_sys [7]=geo_total [8]=geo_sys
-    bx_planets: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: [0] * 9))
+    # [5]=bio_total [6]=bio_sys [7]=geo_total [8]=geo_sys [9]=tf_bodies
+    # [10]=land_bodies [11]=atm_bodies [12]=bio_bodies
+    bx_planets: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: [0] * 13))
     # He% values for gas giants: [bx] = [he_pct, ...]
     bx_he: dict[str, list] = defaultdict(list)
     # bio species: [bx][species_localised] = [sys_count, genus_localised, body_count]
@@ -1398,7 +1399,7 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
                 bx_stars[bx][subtype] += 1
 
         # Planets aggregated per (system, subtype) — gives per-system presence flags
-        for sa, subtype, has_tf, has_land, has_atm, bio, has_bio, geo, has_geo, cnt in conn.execute(
+        for sa, subtype, has_tf, has_land, has_atm, bio, has_bio, geo, has_geo, cnt, tf_cnt, land_cnt, atm_cnt, bio_cnt in conn.execute(
             f"""SELECT system_address, subtype,
                 MAX(CASE WHEN terraform_state NOT IN ('','Not terraformable')
                          AND terraform_state IS NOT NULL THEN 1 ELSE 0 END),
@@ -1409,7 +1410,13 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
                 MAX(CASE WHEN COALESCE(bio_signals,0)>0 THEN 1 ELSE 0 END),
                 COALESCE(SUM(geo_signals),0),
                 MAX(CASE WHEN COALESCE(geo_signals,0)>0 THEN 1 ELSE 0 END),
-                COUNT(*)
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN terraform_state NOT IN ('','Not terraformable')
+                         AND terraform_state IS NOT NULL THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(COALESCE(is_landable,0)),0),
+                COALESCE(SUM(CASE WHEN atmosphere_type NOT IN ('','None')
+                         AND atmosphere_type IS NOT NULL THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(CASE WHEN COALESCE(bio_signals,0)>0 THEN 1 ELSE 0 END),0)
                 FROM bodies
                 WHERE system_address IN ({ph}) AND body_type='Planet' AND subtype IS NOT NULL
                 GROUP BY system_address, subtype""",
@@ -1420,7 +1427,8 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
                 continue
             p = bx_planets[bx][subtype]
             p[0] += 1; p[1] += cnt; p[2] += has_tf; p[3] += has_land; p[4] += has_atm
-            p[5] += bio; p[6] += has_bio; p[7] += geo; p[8] += has_geo
+            p[5] += bio; p[6] += has_bio; p[7] += geo; p[8] += has_geo; p[9] += tf_cnt
+            p[10] += land_cnt; p[11] += atm_cnt; p[12] += bio_cnt
 
         # Gas giant He% for metallicity range
         for sa, he_pct in conn.execute(
@@ -1463,12 +1471,14 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
                 "sys": p[0], "cnt": p[1],
                 "tf": p[2], "land": p[3], "atm": p[4],
                 "bio": p[5], "bio_s": p[6],
-                "geo": p[7], "geo_s": p[8],
+                "geo": p[7], "geo_s": p[8], "tf_cnt": p[9],
+                "land_cnt": p[10], "atm_cnt": p[11], "bio_cnt": p[12],
             }
             for st, p in sorted(
                 bx_planets.get(bx, {}).items(), key=lambda x: -x[1][1]
             )
         }
+
 
         species_out = [
             {"sp": sp, "genus": d[1], "sys": d[0], "cnt": d[2]}
@@ -1481,7 +1491,7 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
         elw = planets.get("Earthlike body", {}).get("cnt", 0)
         ww  = planets.get("Water world",   {}).get("cnt", 0)
         aw  = planets.get("Ammonia world", {}).get("cnt", 0)
-        tf  = sum(v["tf"]  for v in planets.values())
+        tf  = sum(v["tf_cnt"] for v in planets.values())
         bio = sum(v["bio"] for v in planets.values())
         geo = sum(v["geo"] for v in planets.values())
 

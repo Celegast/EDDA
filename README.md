@@ -318,7 +318,7 @@ The dashboard sections:
 | Body-type Catalogue | Per-type totals with first-discovery and mapping stats; property ranges (gravity, temperature, radius, Earth masses, surface pressure, ring outer radius) with min/avg/max and body names (clickable); most bodies of that type in one system (clickable); sortable detail table with distance to commander; spectral distribution chart per body type |
 | Star-class Catalogue | Stars grouped by type; per-class system and body statistics; property ranges (surface temperature, solar radius, solar mass, age, ring outer radius) with min/avg/max and star names; most stars of that class in one system; sortable detail table with distance to commander |
 | Notable Stellar Phenomena | Overview counts; interactive 3D galaxy map with colour-coded markers (category hue, subcategory lightness); FSS Detections table with catalogued NSP types as coloured tags; per-category and per-subcategory drill-down panels with new-codex-entry tracking and decoded galactic region names |
-| Boxels | Filterable, sortable list of visited boxels; per-boxel detail panel with star spectral distribution, planet breakdown (Systems / Rates / Bio Signals / Geo Signals column groups, sorted by body value, rate cells colour-coded by cross-boxel percentile), and biological species table (genus colours, Avg percentile highlighting) |
+| Boxels | Filterable, sortable list of visited boxels; per-boxel detail panel with star spectral distribution, planet breakdown (Systems / Bodies / Terraformables / Rates / Bio Signals / Geo Signals column groups, sorted by body value, Avg cells colour-coded by cross-boxel percentile), and biological species table (genus colours, Avg percentile highlighting) |
 
 ### `pdm run stratum`
 

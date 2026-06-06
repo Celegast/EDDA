@@ -1556,7 +1556,9 @@ function _drawSys() {
     function _oneIn(sys, total) {
         if (!sys || !total) return '—';
         var r = total / sys;
-        return r < 1.05 ? 'every' : '1 in ' + r.toFixed(1);
+        function fmt(n) { var s = n.toFixed(1); return s.slice(-2) === '.0' ? s.slice(0, -2) : s; }
+        if (r < 1.05) return fmt(sys / total);
+        return '1 in ' + fmt(r);
     }
 
     // Genus → colour: same 24-colour palette as the Exobiology 3D map, fixed per genus
@@ -1591,14 +1593,15 @@ function _drawSys() {
             var tot = bx.cnt;
             Object.entries(bx.planets || {}).forEach(function(kv) {
                 var tn = kv[0], pl = kv[1];
-                if (!rawPl[tn]) rawPl[tn] = {freq:[],tf:[],land:[],atm:[],bio:[]};
+                if (!rawPl[tn]) rawPl[tn] = {freq:[],avg_bodies:[],avg_tf:[],land_b:[],atm_b:[],bio_b:[]};
                 var d = rawPl[tn];
                 if (tot > 0 && pl.sys > 0) d.freq.push(pl.sys / tot);
-                if (pl.sys > 0) {
-                    if (pl.tf)    d.tf.push(pl.tf    / pl.sys);
-                    if (pl.land)  d.land.push(pl.land / pl.sys);
-                    if (pl.atm)   d.atm.push(pl.atm  / pl.sys);
-                    if (pl.bio_s) d.bio.push(pl.bio_s / pl.sys);
+                if (pl.cnt > 0) {
+                    if (tot > 0) d.avg_bodies.push(pl.cnt / tot);
+                    if (pl.tf_cnt && tot > 0) d.avg_tf.push(pl.tf_cnt / tot);
+                    if (pl.land_cnt) d.land_b.push(pl.land_cnt / pl.cnt);
+                    if (pl.atm_cnt)  d.atm_b.push(pl.atm_cnt  / pl.cnt);
+                    if (pl.bio_cnt)  d.bio_b.push(pl.bio_cnt   / pl.cnt);
                 }
             });
             (bx.species || []).forEach(function(s) {
@@ -1617,7 +1620,7 @@ function _drawSys() {
         _pctTh = {};
         Object.entries(rawPl).forEach(function(kv) {
             var tn = kv[0], d = kv[1];
-            _pctTh[tn] = { freq: pts(d.freq), tf: pts(d.tf), land: pts(d.land), atm: pts(d.atm), bio: pts(d.bio) };
+            _pctTh[tn] = { freq: pts(d.freq), avg_bodies: pts(d.avg_bodies), avg_tf: pts(d.avg_tf), land_b: pts(d.land_b), atm_b: pts(d.atm_b), bio_b: pts(d.bio_b) };
         });
 
         _pctThSp = {};
@@ -1715,20 +1718,23 @@ function _drawSys() {
         }
         var rows = entries.map(function(e) {
             var t = e[0], p = e[1];
-            var freqR = (total > 0 && p.sys > 0) ? p.sys / total       : 0;
-            var tfR   = (p.sys > 0 && p.tf)      ? p.tf    / p.sys     : 0;
-            var landR = (p.sys > 0 && p.land)     ? p.land  / p.sys    : 0;
-            var atmR  = (p.sys > 0 && p.atm)      ? p.atm   / p.sys    : 0;
-            var bioR  = (p.sys > 0 && p.bio_s)    ? p.bio_s / p.sys    : 0;
+            var freqR      = (total > 0 && p.sys > 0) ? p.sys    / total  : 0;
+            var avgBodiesR = total > 0                 ? p.cnt    / total  : 0;
+            var avgTfR     = (total > 0 && p.tf_cnt)  ? p.tf_cnt / total  : 0;
+            var landR      = (p.cnt && p.land_cnt) ? p.land_cnt / p.cnt : 0;
+            var atmR       = (p.cnt && p.atm_cnt)  ? p.atm_cnt  / p.cnt : 0;
+            var bioR       = (p.cnt && p.bio_cnt)  ? p.bio_cnt  / p.cnt : 0;
             return '<tr>'
                 + '<td style="color:' + _planetCol(t, false) + '">' + esc(t) + '</td>'
                 + cell(p.sys)
                 + cell(_oneIn(p.sys, total), _pctClass(freqR, t, 'freq'))
-                + cell(p.cnt)
-                + gsep(pct(p.tf,   p.sys), _pctClass(tfR,   t, 'tf'))
-                + cell(pct(p.land, p.sys), _pctClass(landR, t, 'land'))
-                + cell(pct(p.atm,  p.sys), _pctClass(atmR,  t, 'atm'))
-                + cell(pct(p.bio_s,p.sys), _pctClass(bioR,  t, 'bio'))
+                + gsep(p.cnt)
+                + cell(_oneIn(p.cnt, total), _pctClass(avgBodiesR, t, 'avg_bodies'))
+                + gsep(p.tf_cnt || null)
+                + cell(_oneIn(p.tf_cnt, total), _pctClass(avgTfR, t, 'avg_tf'))
+                + gsep(pct(p.land_cnt, p.cnt), _pctClass(landR, t, 'land_b'))
+                + cell(pct(p.atm_cnt,  p.cnt), _pctClass(atmR,  t, 'atm_b'))
+                + cell(pct(p.bio_cnt,  p.cnt), _pctClass(bioR,  t, 'bio_b'))
                 + gsep(p.bio_s || null)
                 + cell(p.bio   || null)
                 + gsep(p.geo_s || null)
@@ -1739,14 +1745,18 @@ function _drawSys() {
         return '<table class="data-table bx-sys-list">'
             + '<tr>'
             + '<th rowspan="2">Type</th>'
-            + '<th colspan="3" class="grp">Systems</th>'
-            + '<th colspan="4" class="grp grp-sep">Rates</th>'
+            + '<th colspan="2" class="grp">Systems</th>'
+            + '<th colspan="2" class="grp grp-sep">Bodies</th>'
+            + '<th colspan="2" class="grp grp-sep">Terraformables</th>'
+            + '<th colspan="3" class="grp grp-sep">Rates</th>'
             + '<th colspan="2" class="grp grp-sep">Bio Signals</th>'
             + '<th colspan="2" class="grp grp-sep">Geo Signals</th>'
             + '</tr>'
             + '<tr>'
-            + '<th># sys</th><th>Avg</th><th>bodies</th>'
-            + '<th class="grp-sep">TF</th><th>Land</th><th>Atm</th><th>Bio</th>'
+            + '<th>#</th><th>Avg</th>'
+            + '<th class="grp-sep">#</th><th>Avg</th>'
+            + '<th class="grp-sep">#</th><th>Avg</th>'
+            + '<th class="grp-sep">Land</th><th>Atm</th><th>Bio</th>'
             + '<th class="grp-sep">sys</th><th>total</th>'
             + '<th class="grp-sep">sys</th><th>total</th>'
             + '</tr>'
