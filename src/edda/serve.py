@@ -1,21 +1,28 @@
-"""Flask-based query builder web UI — pdm run serve."""
+"""Flask-based web UI — control panel + query builder (pdm run serve)."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import queue
 import sqlite3
+import subprocess
+import sys
 import threading
 import webbrowser
 from pathlib import Path
 from typing import Any
 
-from importlib.metadata import version as _pkg_version
+from edda import __version__ as _VERSION
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, Response, jsonify, render_template_string, request, stream_with_context
 
 from .analysis._region_map_data import regions as _REGION_NAMES
 from .analysis.valuation import SPECIES_VALUES as _SV
+from .config import (
+    list_commanders, get_active_commander, set_active_commander,
+    get_ui_state, set_ui_state,
+)
 from .db.connection import open_db
 
 # ── Shared choice lists ───────────────────────────────────────────────────────
@@ -363,13 +370,12 @@ _LIMIT = 500
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
 
-try:
-    _VERSION = _pkg_version("edda")
-except Exception:
-    _VERSION = "dev"
 
 app = Flask(__name__)
 _db_path: Path | None = None
+
+_output_queue: queue.Queue = queue.Queue()
+_task_running = threading.Event()
 
 
 def _conn() -> sqlite3.Connection:
@@ -643,8 +649,20 @@ def _js_schema() -> str:
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@app.after_request
+def _no_cache(response):
+    if "text/html" in response.content_type:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/")
 def index() -> str:
+    return render_template_string(_CONTROL_TEMPLATE, version=_VERSION)
+
+
+@app.get("/query-builder")
+def query_builder() -> str:
     return render_template_string(
         _TEMPLATE,
         schema_json=_js_schema(),
@@ -773,7 +791,412 @@ def get_system_data():
         conn.close()
 
 
-# ── HTML template ─────────────────────────────────────────────────────────────
+# ── Commander API ─────────────────────────────────────────────────────────────
+
+@app.get("/api/commanders")
+def api_commanders():
+    commanders = list_commanders()
+    active = get_active_commander()
+    return jsonify({"commanders": commanders, "active": active})
+
+
+@app.get("/api/ui-state")
+def api_get_ui_state():
+    return jsonify(get_ui_state())
+
+
+@app.post("/api/ui-state")
+def api_set_ui_state():
+    data = request.get_json(force=True) or {}
+    if data:
+        set_ui_state(data)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/commanders/active")
+def api_set_active():
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    set_active_commander(name)
+    return jsonify({"ok": True, "active": name})
+
+
+# ── Task runner (subprocess → SSE) ────────────────────────────────────────────
+
+_TASK_FUNCS = {
+    "import":    "cmd_import",
+    "dashboard": "cmd_dashboard",
+    "stratum":   "cmd_stratum",
+    "charts":    "cmd_charts",
+    "trip":      "cmd_trip",
+}
+
+
+@app.post("/api/tasks/run")
+def api_run_task():
+    if _task_running.is_set():
+        return jsonify({"error": "A task is already running"}), 409
+
+    data = request.get_json(force=True) or {}
+    task = data.get("task", "")
+    task_args: list[str] = data.get("args", [])
+
+    if task not in _TASK_FUNCS:
+        return jsonify({"error": f"Unknown task: {task!r}"}), 400
+
+    func_name = _TASK_FUNCS[task]
+
+    def _run() -> None:
+        _task_running.set()
+        while not _output_queue.empty():
+            try:
+                _output_queue.get_nowait()
+            except queue.Empty:
+                break
+        code = (
+            f"from edda.cli import {func_name}; "
+            f"{func_name}({task_args!r})"
+        )
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=str(Path.cwd()),
+            )
+            for line in proc.stdout:
+                _output_queue.put(line.rstrip("\n"))
+            proc.wait()
+        except Exception as exc:
+            _output_queue.put(f"ERROR: {exc}")
+        finally:
+            _output_queue.put("__DONE__")
+            _task_running.clear()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/tasks/stream")
+def api_task_stream():
+    @stream_with_context
+    def _generate():
+        while True:
+            try:
+                msg = _output_queue.get(timeout=25)
+                if msg == "__DONE__":
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    return
+                yield f"data: {json.dumps({'line': msg})}\n\n"
+            except queue.Empty:
+                yield f"data: {json.dumps({'ping': True})}\n\n"
+
+    return Response(
+        _generate(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Control panel template ────────────────────────────────────────────────────
+
+_CONTROL_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EDDA Control Panel</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--orange:#f0883e;--red:#f85149}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;min-height:100vh}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-size:17px;font-weight:700;letter-spacing:.5px;color:var(--accent)}
+.logo span{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+nav a{color:var(--muted);text-decoration:none;margin-left:18px;font-size:13px}
+nav a:hover{color:var(--accent)}
+.container{max-width:860px;margin:24px auto;padding:0 20px;display:grid;gap:18px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px}
+.card h2{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);margin-bottom:14px}
+.cmdr-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px}
+.cmdr-row:hover{background:rgba(88,166,255,.06)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0}
+.dot.on{background:var(--green)}
+.cmdr-name{flex:1}
+.cmdr-name.on{color:var(--green);font-weight:600}
+.badge{font-size:11px;color:var(--muted)}
+.no-cmdrs{color:var(--muted);font-style:italic;font-size:13px;padding:4px 10px}
+.tasks-row{display:flex;flex-wrap:wrap;gap:10px}
+.tbtn{background:#21262d;border:1px solid var(--border);color:var(--text);padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;transition:border-color .15s,background .15s}
+.tbtn:hover{border-color:var(--accent);background:rgba(88,166,255,.09);color:var(--accent)}
+.tbtn.active{border-color:var(--accent);color:var(--accent)}
+.tbtn:disabled{opacity:.4;cursor:not-allowed}
+.opts{display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px}
+.opts.open{display:block}
+.opts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:14px}
+.fg{display:flex;flex-direction:column;gap:5px}
+.fg label{font-size:12px;color:var(--muted)}
+.fg input[type=text]{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 9px;border-radius:4px;font-size:13px;width:100%}
+.fg input[type=text]:focus{outline:none;border-color:var(--accent)}
+.ck{display:flex;align-items:center;gap:7px;margin-top:2px}
+.ck input{accent-color:var(--accent)}
+.run-btn{background:var(--accent);border:none;color:#0d1117;padding:7px 22px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px}
+.run-btn:hover{opacity:.85}
+.con-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.con-hdr h2{margin-bottom:0}
+.clr-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px}
+.clr-btn:hover{border-color:var(--red);color:var(--red)}
+#con{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;height:300px;overflow-y:auto;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;line-height:1.6}
+.ln{white-space:pre-wrap;word-break:break-all}
+.ln.e{color:var(--red)}
+.ln.ok{color:var(--green)}
+#sdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
+#sdot.run{background:var(--orange);animation:pulse 1s infinite}
+#sdot.done{background:var(--green)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.sw-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:3px 11px;border-radius:4px;cursor:pointer;font-size:12px}
+.sw-btn:hover{border-color:var(--accent);color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">EDDA <span>v{{ version }}</span></div>
+  <nav>
+    <a href="/query-builder">Query Builder &rarr;</a>
+  </nav>
+</header>
+<div class="container">
+
+  <div class="card">
+    <h2>Commander</h2>
+    <div id="cmdr-list"><span class="no-cmdrs">Loading&hellip;</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Tasks</h2>
+    <div class="tasks-row">
+      <button class="tbtn" id="tbtn-import"    onclick="toggleOpts('import')">&#128190; Import Journals</button>
+      <button class="tbtn" id="tbtn-dashboard" onclick="toggleOpts('dashboard')">&#128202; Build Dashboard</button>
+      <button class="tbtn" id="tbtn-stratum"   onclick="toggleOpts('stratum')">&#127758; Stratum Report</button>
+      <button class="tbtn" id="tbtn-charts"    onclick="toggleOpts('charts')">&#128200; Build Charts</button>
+      <button class="tbtn" id="tbtn-trip"      onclick="toggleOpts('trip')">&#128345; Trip Report</button>
+    </div>
+
+    <div id="opts-import" class="opts">
+      <div class="opts-grid">
+        <div class="fg"><label>Journal directory</label><input type="text" id="i-jdir" placeholder="(default: ED saved games)"></div>
+        <div class="fg"><div class="ck"><input type="checkbox" id="i-force"><label for="i-force">Force re-import all files</label></div></div>
+      </div>
+      <button class="run-btn" onclick="runTask('import')">Run Import</button>
+    </div>
+
+    <div id="opts-dashboard" class="opts">
+      <div class="opts-grid">
+        <div class="fg"><label>Output file</label><input type="text" id="d-out" value="dashboard.html"></div>
+      </div>
+      <button class="run-btn" onclick="runTask('dashboard')">Build Dashboard</button>
+    </div>
+
+    <div id="opts-stratum" class="opts">
+      <div class="opts-grid">
+        <div class="fg"><label>Min temperature (K)</label><input type="text" id="s-min" value="165"></div>
+        <div class="fg"><label>Max temperature (K)</label><input type="text" id="s-max" placeholder="(no limit)"></div>
+        <div class="fg"><label>Output file</label><input type="text" id="s-out" value="stratum_report.html"></div>
+      </div>
+      <button class="run-btn" onclick="runTask('stratum')">Build Report</button>
+    </div>
+
+    <div id="opts-charts" class="opts">
+      <div class="opts-grid">
+        <div class="fg"><label>Output directory</label><input type="text" id="c-out" value="output"></div>
+      </div>
+      <button class="run-btn" onclick="runTask('charts')">Build Charts</button>
+    </div>
+
+    <div id="opts-trip" class="opts">
+      <div class="opts-grid">
+        <div class="fg"><label>From (YYYY-MM-DD or YYYY-MM-DD HH:MM)</label><input type="text" id="t-from" placeholder="e.g. 2026-01-01"></div>
+        <div class="fg"><label>To (YYYY-MM-DD or YYYY-MM-DD HH:MM)</label><input type="text" id="t-to" placeholder="e.g. 2026-06-08"></div>
+        <div class="fg"><label>HTML output file (optional)</label><input type="text" id="t-out" placeholder="trip_report.html"></div>
+        <div class="fg"><div class="ck"><input type="checkbox" id="t-systems"><label for="t-systems">List all systems visited</label></div></div>
+      </div>
+      <button class="run-btn" onclick="runTask('trip')">Build Trip Report</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="con-hdr">
+      <h2><span id="sdot"></span>Output</h2>
+      <button class="clr-btn" onclick="clearCon()">Clear</button>
+    </div>
+    <div id="con"></div>
+  </div>
+
+</div>
+<script>
+var _es=null, _openTask=null;
+
+function toggleOpts(t){
+  ['import','dashboard','stratum','charts','trip'].forEach(function(n){
+    var el=document.getElementById('opts-'+n);
+    var btn=document.getElementById('tbtn-'+n);
+    if(n===t){
+      var open=el.classList.toggle('open');
+      btn.classList.toggle('active',open);
+      _openTask=open?t:null;
+    } else {
+      el.classList.remove('open');
+      btn.classList.remove('active');
+    }
+  });
+}
+
+function buildArgs(t){
+  var a=[];
+  if(t==='import'){
+    var jd=document.getElementById('i-jdir').value.trim();
+    if(jd){a.push('--journal-dir');a.push(jd);}
+    if(document.getElementById('i-force').checked)a.push('--force');
+  } else if(t==='dashboard'){
+    var o=document.getElementById('d-out').value.trim();
+    if(o){a.push('--out');a.push(o);}
+  } else if(t==='stratum'){
+    var mn=document.getElementById('s-min').value.trim();
+    var mx=document.getElementById('s-max').value.trim();
+    var o=document.getElementById('s-out').value.trim();
+    if(mn){a.push('--min-temp');a.push(mn);}
+    if(mx){a.push('--max-temp');a.push(mx);}
+    if(o){a.push('--out');a.push(o);}
+  } else if(t==='charts'){
+    var o=document.getElementById('c-out').value.trim();
+    if(o){a.push('--out');a.push(o);}
+  } else if(t==='trip'){
+    var fr=document.getElementById('t-from').value.trim();
+    var to=document.getElementById('t-to').value.trim();
+    var o=document.getElementById('t-out').value.trim();
+    if(!fr||!to){alert('Trip report requires both From and To dates.');return null;}
+    a.push('--from');a.push(fr);
+    a.push('--to');a.push(to);
+    if(o){a.push('--html');a.push(o);}
+    if(document.getElementById('t-systems').checked)a.push('--systems');
+  }
+  return a;
+}
+
+function addLine(txt,cls){
+  var c=document.getElementById('con');
+  var d=document.createElement('div');
+  d.className='ln'+(cls?' '+cls:'');
+  d.textContent=txt;
+  c.appendChild(d);
+  c.scrollTop=c.scrollHeight;
+}
+
+function clearCon(){
+  document.getElementById('con').innerHTML='';
+  document.getElementById('sdot').className='';
+}
+
+function setBusy(busy){
+  document.querySelectorAll('.tbtn,.run-btn').forEach(function(b){b.disabled=busy;});
+}
+
+function runTask(t){
+  if(_es){_es.close();_es=null;}
+  var args=buildArgs(t);
+  if(args===null)return;
+  setBusy(true);
+  document.getElementById('sdot').className='run';
+  addLine('> '+t+(args.length?' '+args.join(' '):''));
+
+  _es=new EventSource('/api/tasks/stream');
+  _es.onmessage=function(e){
+    var d=JSON.parse(e.data);
+    if(d.done){
+      addLine('> Done.','ok');
+      document.getElementById('sdot').className='done';
+      setBusy(false);
+      _es.close();_es=null;
+    } else if(d.line!==undefined){
+      var c=(/^(ERROR|Traceback|Warning)/.test(d.line))?'e':'';
+      addLine(d.line,c);
+    }
+  };
+  _es.onerror=function(){
+    addLine('> Connection lost.','e');
+    document.getElementById('sdot').className='';
+    setBusy(false);
+    if(_es){_es.close();_es=null;}
+  };
+
+  fetch('/api/tasks/run',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task:t,args:args})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.error){addLine('> Error: '+d.error,'e');setBusy(false);if(_es){_es.close();_es=null;}}
+  });
+}
+
+function loadCmdrs(){
+  fetch('/api/commanders').then(function(r){return r.json();}).then(function(d){
+    var el=document.getElementById('cmdr-list');
+    if(!d.commanders||!d.commanders.length){
+      el.innerHTML='<span class="no-cmdrs">No commanders found — run Import to auto-detect from journal files.</span>';
+      return;
+    }
+    el.innerHTML=d.commanders.map(function(n){
+      var on=n===d.active;
+      return '<div class="cmdr-row">'
+        +'<div class="dot'+(on?' on':'')+'"></div>'
+        +'<div class="cmdr-name'+(on?' on':'')+'">'+esc(n)
+        +(on?' <span class="badge">(active)</span>':'')+'</div>'
+        +(on?'':'<button class="sw-btn" data-n="'+esc(n)+'" onclick="switchCmdr(this)">Switch</button>')
+        +'</div>';
+    }).join('');
+  });
+}
+
+function switchCmdr(btn){
+  var n=btn.dataset.n;
+  fetch('/api/commanders/active',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:n})
+  }).then(function(){loadCmdrs();});
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+loadCmdrs();
+
+// Persist trip dates in .edda/config.json via the server.
+(function(){
+  var fields=['t-from','t-to'];
+  fetch('/api/ui-state').then(function(r){return r.json();}).then(function(d){
+    if(d['trip-from'])document.getElementById('t-from').value=d['trip-from'];
+    if(d['trip-to'])  document.getElementById('t-to').value=d['trip-to'];
+  });
+  fields.forEach(function(id){
+    document.getElementById(id).addEventListener('change',function(){
+      var update={};
+      update['trip-from']=document.getElementById('t-from').value;
+      update['trip-to']=document.getElementById('t-to').value;
+      fetch('/api/ui-state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(update)});
+    });
+  });
+}());
+</script>
+</body>
+</html>"""
+
+
+# ── Query-builder template ─────────────────────────────────────────────────────
 
 _TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1941,12 +2364,17 @@ def main(argv: list[str] | None = None) -> None:
         "--port", type=int, default=5000, metavar="PORT",
         help="Port to listen on (default: 5000)",
     )
+    parser.add_argument(
+        "--no-browser", action="store_true",
+        help="Do not auto-open the browser on startup",
+    )
     args = parser.parse_args(argv)
 
     global _db_path
     _db_path = args.db
 
     url = f"http://localhost:{args.port}/"
-    print(f"EDDA Query Builder → {url}  (Ctrl-C to stop)")
-    threading.Timer(0.8, webbrowser.open, args=[url]).start()
-    app.run(host="127.0.0.1", port=args.port, debug=False)
+    print(f"EDDA Control Panel -> {url}  (Ctrl-C to stop)")
+    if not args.no_browser and sys.stdout and sys.stdout.isatty():
+        threading.Timer(0.8, webbrowser.open, args=[url]).start()
+    app.run(host="127.0.0.1", port=args.port, debug=False, threaded=True)

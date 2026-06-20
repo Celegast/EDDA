@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from .db.connection import open_db, get_db_path
-from .importer.journal_reader import run_import, ED_JOURNAL_DIR
+from .importer.journal_reader import run_import, run_import_all_commanders, ED_JOURNAL_DIR
 from .analysis import stats as st
 from .analysis import maps as mp
 from .analysis import charts as ch
@@ -68,14 +68,23 @@ def cmd_import(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    conn = open_db(args.db)
-    try:
-        run_import(conn,
-                   journal_dir=args.journal_dir,
-                   force=args.force,
-                   verbose=not args.quiet)
-    finally:
-        conn.close()
+    if args.db is None:
+        # Multi-commander mode: auto-detect commanders from journal files and
+        # create one .edda/<name>.db per commander.
+        run_import_all_commanders(
+            journal_dir=args.journal_dir,
+            force=args.force,
+            verbose=not args.quiet,
+        )
+    else:
+        conn = open_db(args.db)
+        try:
+            run_import(conn,
+                       journal_dir=args.journal_dir,
+                       force=args.force,
+                       verbose=not args.quiet)
+        finally:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------

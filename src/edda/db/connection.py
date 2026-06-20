@@ -11,7 +11,15 @@ _DEFAULT_DB = Path(".edda") / "ed.db"
 
 
 def get_db_path(override: Optional[Path] = None) -> Path:
-    path = Path(override) if override else _DEFAULT_DB
+    if override:
+        path = Path(override)
+    else:
+        try:
+            from ..config import get_active_db_path
+            active = get_active_db_path()
+        except Exception:
+            active = None
+        path = active if active is not None else _DEFAULT_DB
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

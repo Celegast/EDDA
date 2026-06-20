@@ -15,7 +15,7 @@ import json
 import math
 import re
 import sqlite3
-from importlib.metadata import version as _pkg_version
+from edda import __version__ as _edda_version
 from pathlib import Path
 
 import pandas as pd
@@ -3818,10 +3818,7 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
         f'    <a href="#{sid}">{label}</a>' for sid, label in nav_items
     )
 
-    try:
-        _version = _pkg_version("edda")
-    except Exception:
-        _version = "dev"
+    _version = _edda_version
 
     html = _HTML_TEMPLATE.format(
         title="EDDA — Elite Dangerous Data Analyser",
