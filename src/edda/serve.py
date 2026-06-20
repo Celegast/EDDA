@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import queue
 import sqlite3
 import subprocess
@@ -602,6 +603,12 @@ def _build_combined_query(conditions: list[dict], logic: str
         selects.append("s.system_address AS _sa")
         seen_aliases.add("_sa")
 
+    # Always include raw coords for server-side distance calculation (hidden from table)
+    for col, alias in [("s.x", "_dist_x"), ("s.y", "_dist_y"), ("s.z", "_dist_z")]:
+        if alias not in seen_aliases:
+            selects.append(f"{col} AS {alias}")
+            seen_aliases.add(alias)
+
     sql = (
         f"SELECT {', '.join(selects)}"
         f" FROM {from_clause}"
@@ -647,6 +654,26 @@ def _js_schema() -> str:
     return json.dumps(out)
 
 
+def _current_position() -> tuple[float, float, float] | None:
+    """Return (x, y, z) of the most recently visited system, or None."""
+    try:
+        conn = _conn()
+        try:
+            row = conn.execute(
+                "SELECT s.x, s.y, s.z"
+                " FROM systems s"
+                " JOIN jumps j ON s.system_address = j.system_address"
+                " ORDER BY j.timestamp DESC LIMIT 1"
+            ).fetchone()
+            if row and all(v is not None for v in row):
+                return float(row[0]), float(row[1]), float(row[2])
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.after_request
@@ -685,16 +712,43 @@ def run_query():
         conn = _conn()
         try:
             cursor = conn.execute(sql, params)
-            rows = cursor.fetchall()
+            raw_rows = cursor.fetchall()
             columns = [d[0] for d in (cursor.description or [])]
-            return jsonify({
-                "count":   len(rows),
-                "columns": columns,
-                "rows":    [list(r) for r in rows],
-                "sql":     _inline_sql(sql, params),
-            })
         finally:
             conn.close()
+
+        # Compute distance from current commander position
+        pos = _current_position()
+        _hidden = {"_dist_x", "_dist_y", "_dist_z"}
+        if pos:
+            cx, cy, cz = pos
+            xi = columns.index("_dist_x")
+            yi = columns.index("_dist_y")
+            zi = columns.index("_dist_z")
+            out_columns = ["distance_ly"] + [c for c in columns if c not in _hidden]
+            out_rows = []
+            for r in raw_rows:
+                rx, ry, rz = r[xi], r[yi], r[zi]
+                if rx is not None and ry is not None and rz is not None:
+                    dist = round(math.sqrt(
+                        (rx - cx) ** 2 + (ry - cy) ** 2 + (rz - cz) ** 2), 2)
+                else:
+                    dist = None
+                out_rows.append(
+                    [dist] + [v for i, v in enumerate(r) if columns[i] not in _hidden])
+        else:
+            out_columns = [c for c in columns if c not in _hidden]
+            out_rows = [
+                [v for i, v in enumerate(r) if columns[i] not in _hidden]
+                for r in raw_rows
+            ]
+
+        return jsonify({
+            "count":   len(out_rows),
+            "columns": out_columns,
+            "rows":    out_rows,
+            "sql":     _inline_sql(sql, params),
+        })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
