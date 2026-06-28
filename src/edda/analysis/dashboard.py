@@ -3677,17 +3677,23 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     df_oval    = st.organic_values_table(conn)
     df_species = st.top_species(conn)
     df_sxp     = st.species_by_planet_type(conn)
-    df_he_tec  = st.boxel_he_vs_tectonicas(conn)
-
-    _fig_tec_he = ch.plot_tectonicas_he_distribution(df_he_tec, None)
     exobio_tabs = [
         ("Top Organisms",       _img(ch.plot_top_species_static(df_species, None))),
         ("Income by Species",   _plotly(ch.plot_organic_value_by_species_interactive(df_oval, None))),
         ("Genus × Planet Type", _plotly(ch.plot_species_planet_heatmap_interactive(df_sxp, None))),
         ("By Planet (static)",  _img(ch.plot_organic_value_by_planet_type_static(df_oval, None))),
     ]
-    if _fig_tec_he is not None:
-        exobio_tabs.append(("He% vs Tectonicas", _plotly(_fig_tec_he)))
+    # He% vs species tabs for every high-value biological (≥ 8 MCr) found in the data
+    _HIGH_BIO = sorted(
+        [(sp, v) for sp, v in SPECIES_VALUES.items() if v >= 8_000_000],
+        key=lambda x: -x[1],
+    )
+    for _sp_name, _ in _HIGH_BIO:
+        _pattern = f"%{_sp_name.split()[-1].lower()}%"
+        _df_he = st.boxel_he_vs_species(conn, _pattern)
+        _fig_he = ch.plot_he_vs_species_distribution(_df_he, _sp_name)
+        if _fig_he is not None:
+            exobio_tabs.append((f"He% vs {_sp_name.split()[-1]}", _plotly(_fig_he)))
 
     sections.append(_section("exobiology", "Exobiology",
         _tab_group("exobiology", exobio_tabs)

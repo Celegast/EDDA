@@ -1333,6 +1333,49 @@ def boxel_he_vs_tectonicas(conn: sqlite3.Connection) -> pd.DataFrame:
     return grp
 
 
+def boxel_he_vs_species(conn: sqlite3.Connection, pattern: str) -> pd.DataFrame:
+    """
+    Generic version of boxel_he_vs_tectonicas.
+
+    pattern: case-insensitive SQL LIKE pattern matched against species_localised/species.
+    Returns df with columns: boxel, he_mean, gg_count, has_species.
+    """
+    gg_sql = """
+        SELECT s.name AS system_name, b.atmosphere_he_pct
+        FROM bodies b
+        JOIN systems s ON s.system_address = b.system_address
+        WHERE LOWER(b.subtype) LIKE '%gas giant%'
+          AND b.atmosphere_he_pct IS NOT NULL
+    """
+    df_gg = pd.read_sql_query(gg_sql, conn)
+    if df_gg.empty:
+        return pd.DataFrame(columns=["boxel", "he_mean", "gg_count", "has_species"])
+
+    sp_sql = """
+        SELECT DISTINCT s.name AS system_name
+        FROM organic_scans sc
+        JOIN systems s ON s.system_address = sc.system_address
+        WHERE sc.scan_state = 'Analyse'
+          AND (LOWER(sc.species_localised) LIKE ? OR LOWER(sc.species) LIKE ?)
+    """
+    df_sp = pd.read_sql_query(sp_sql, conn, params=[pattern, pattern])
+
+    df_gg["boxel"] = df_gg["system_name"].apply(lambda n: _BOXEL_RE.sub("", n))
+
+    sp_boxels: set[str] = set()
+    if not df_sp.empty:
+        df_sp["boxel"] = df_sp["system_name"].apply(lambda n: _BOXEL_RE.sub("", n))
+        sp_boxels = set(df_sp["boxel"])
+
+    grp = (
+        df_gg.groupby("boxel")
+        .agg(he_mean=("atmosphere_he_pct", "mean"), gg_count=("atmosphere_he_pct", "count"))
+        .reset_index()
+    )
+    grp["has_species"] = grp["boxel"].isin(sp_boxels)
+    return grp
+
+
 def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
     """
     Return aggregate statistics per boxel for all boxels with >= min_systems visited.

@@ -827,6 +827,75 @@ def plot_tectonicas_he_distribution(df: pd.DataFrame,
     return None
 
 
+def plot_he_vs_species_distribution(df: pd.DataFrame, species_label: str,
+                                    col: str = "has_species",
+                                    out_path: Path | None = None) -> go.Figure | None:
+    """
+    He% distribution of all boxels vs species-containing boxels.
+    Generic version of plot_tectonicas_he_distribution.
+    Returns None when there is no He% data or no confirmed species sightings.
+    """
+    if df.empty or col not in df.columns or not df[col].any():
+        return None
+
+    bin_width = 0.2
+    lo = max(23.0, np.floor(df["he_mean"].min() * 5) / 5)
+    hi = min(34.0, np.ceil(df["he_mean"].max() * 5) / 5) + bin_width
+    bins = np.arange(lo, hi, bin_width)
+    if len(bins) < 2:
+        return None
+    centres = bins[:-1] + bin_width / 2
+
+    all_counts, _ = np.histogram(df["he_mean"], bins=bins)
+    sp_counts,  _ = np.histogram(df.loc[df[col], "he_mean"], bins=bins)
+
+    total_all = all_counts.sum() or 1
+    total_sp  = sp_counts.sum()  or 1
+    all_norm  = all_counts / total_all
+    sp_norm   = sp_counts  / total_sp
+
+    x_labels = [f"{c:.1f}" for c in centres]
+    epithet = species_label.split()[-1]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=sp_norm,
+        fill="tozeroy", mode="none",
+        fillcolor="rgba(255,200,50,0.25)",
+        name=f"Normalised {epithet}",
+        hovertemplate=f"He%: %{{x}}<br>{epithet} (norm): %{{y:.2%}}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=all_norm,
+        mode="lines", line=dict(color="#4488ff", width=2),
+        name="All Boxels He%",
+        hovertemplate="He%: %{x}<br>All boxels: %{y:.2%}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=sp_norm,
+        mode="lines", line=dict(color="#ff7722", width=2),
+        name=f"{epithet} Boxels He%",
+        hovertemplate=f"He%: %{{x}}<br>{epithet}: %{{y:.2%}}<extra></extra>",
+    ))
+
+    n_sp  = int(df[col].sum())
+    n_all = len(df)
+    fig.update_layout(
+        title=f"Boxel He% vs {species_label}  ({n_sp} {epithet} boxels / {n_all} total)",
+        xaxis_title="Boxel Mean He%",
+        yaxis_title="Normalised Frequency",
+        yaxis_tickformat=".1%",
+        paper_bgcolor="#0a0a1a", plot_bgcolor="#0f0f2a",
+        font_color="white",
+        legend=dict(bgcolor="rgba(0,0,0,0.4)"),
+        hovermode="x unified",
+    )
+    if out_path is None:
+        return fig
+    _write_interactive(fig, out_path)
+    return None
+
+
 # He ranges from the Tectonicas community chart (orange > 5%)
 _TECTONICAS_RANGES = [(24.2, 24.5), (25.9, 26.5)]
 
