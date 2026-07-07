@@ -235,6 +235,8 @@ SELECT
     b.distance_ls,
     b.semi_major_axis,
     b.parent_star_id,
+    b.terraform_state,
+    b.was_mapped,
     -- parent star info
     ps.subtype              AS star_type,
     ps.age_my               AS star_age_my,
@@ -1244,6 +1246,76 @@ def _star_mass_companion_chart(df: pd.DataFrame) -> go.Figure | None:
 
 
 # ---------------------------------------------------------------------------
+# Terraform state chart
+# ---------------------------------------------------------------------------
+
+def _terraform_chart(df: pd.DataFrame) -> go.Figure | None:
+    """Stratum rate by terraform state (terraformable vs not)."""
+    def _tf_label(val) -> str:
+        v = (val or "").strip().lower()
+        if not v or v == "not terraformable":
+            return "Not terraformable"
+        if v == "terraformable":
+            return "Terraformable"
+        return val.strip()
+
+    d = df.copy()
+    d["tf_label"] = d["terraform_state"].apply(_tf_label)
+    grp = (
+        d.groupby("tf_label")["status"]
+        .value_counts()
+        .unstack(fill_value=0)
+    )
+    for col in ("stratum", "other", "unconfirmed"):
+        if col not in grp.columns:
+            grp[col] = 0
+
+    grp["scanned"] = grp["stratum"] + grp["other"]
+    grp["rate"] = grp.apply(
+        lambda r: r["stratum"] / r["scanned"] * 100 if r["scanned"] > 0 else None, axis=1
+    )
+    grp = grp.sort_values("scanned", ascending=False)
+    if grp.empty:
+        return None
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Bar(
+        x=grp.index, y=grp["stratum"],
+        name="Stratum", marker_color=_COL_STRATUM, opacity=0.85,
+    ), secondary_y=False)
+    fig.add_trace(go.Bar(
+        x=grp.index, y=grp["other"],
+        name="Other genus", marker_color=_COL_OTHER, opacity=0.85,
+    ), secondary_y=False)
+    fig.add_trace(go.Bar(
+        x=grp.index, y=grp["unconfirmed"],
+        name="Unconfirmed", marker_color=_COL_UNKNOWN, opacity=0.6,
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=grp.index, y=grp["rate"],
+        name="Stratum rate %", mode="markers+text+lines",
+        marker=dict(color=_COL_RATE, size=8),
+        line=dict(color="rgba(255,255,255,0.2)", width=1.5, dash="dot"),
+        text=[f"{v:.1f}%" if v is not None else "" for v in grp["rate"]],
+        textposition="top center",
+        textfont=dict(color=_COL_RATE, size=9),
+        hovertemplate="%{y:.1f}%<extra>Stratum rate</extra>",
+    ), secondary_y=True)
+    fig.update_layout(
+        title="Terraform State vs Stratum Confirmation",
+        barmode="stack",
+        yaxis_title="Body count",
+        height=360,
+        **_LAYOUT_BASE,
+    )
+    fig.update_yaxes(title_text="Stratum rate (%)", secondary_y=True, range=[0, 115],
+                     gridcolor="rgba(255,255,255,0.06)")
+    fig.update_xaxes(gridcolor=_GRID)
+    fig.update_yaxes(gridcolor=_GRID, secondary_y=False)
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Correlation matrices
 # ---------------------------------------------------------------------------
 
@@ -1348,7 +1420,10 @@ def _candidates_table(df: pd.DataFrame) -> str:
             cls = "unknown"
             status_txt = "—"
 
-        sa = r["system_address"]
+        sa  = r["system_address"]
+        tf  = (r.get("terraform_state") or "").strip().lower()
+        tf_txt = "✓" if tf and tf not in ("", "not terraformable") else "—"
+        mapped_txt = "✓" if r.get("was_mapped") else "—"
         rows.append(
             f'<tr>'
             f'<td><span class="sys-link" data-sa="{sa}">{_esc(r["system_name"])}</span></td>'
@@ -1359,6 +1434,8 @@ def _candidates_table(df: pd.DataFrame) -> str:
             f'<td class="num">{_fmt(r["radius_km"], 0)}</td>'
             f'<td>{_esc(r["atmosphere_type"] or "—")}</td>'
             f'<td>{_esc("Barycentre" if pd.isna(r["star_type"]) else r["star_type"] or "—")}</td>'
+            f'<td class="num">{tf_txt}</td>'
+            f'<td class="num">{mapped_txt}</td>'
             f'<td class="{cls}">{_esc(status_txt)}</td>'
             f'</tr>'
         )
@@ -1371,6 +1448,7 @@ def _candidates_table(df: pd.DataFrame) -> str:
         '<th>Temp (K)</th><th>Gravity (g)</th>'
         '<th>Mass (EM)</th><th>Radius (km)</th>'
         '<th>Atmosphere</th><th>Star type</th>'
+        '<th>Terraform</th><th>Mapped</th>'
         '<th>Status</th>'
         '</tr></thead>'
         '<tbody>' + "".join(rows) + '</tbody>'
@@ -1429,7 +1507,9 @@ def _oddities_table(df: pd.DataFrame) -> str:
 
     rows = []
     for _, r in odd.iterrows():
-        sa = r["system_address"]
+        sa  = r["system_address"]
+        tf  = (r.get("terraform_state") or "").strip().lower()
+        tf_txt = "✓" if tf and tf not in ("", "not terraformable") else "—"
         rows.append(
             f'<tr>'
             f'<td><span class="sys-link" data-sa="{sa}">{_esc(r["system_name"])}</span></td>'
@@ -1440,6 +1520,7 @@ def _oddities_table(df: pd.DataFrame) -> str:
             f'<td class="num">{_fmt(r["mass_em"], 3)}</td>'
             f'<td>{_esc(r["atmosphere_type"] or "—")}</td>'
             f'<td>{_esc("Barycentre" if pd.isna(r["star_type"]) else r["star_type"] or "—")}</td>'
+            f'<td class="num">{tf_txt}</td>'
             f'</tr>'
         )
 
@@ -1449,7 +1530,7 @@ def _oddities_table(df: pd.DataFrame) -> str:
         '<thead><tr>'
         '<th>System</th><th>Body</th><th>Confirmed genus</th>'
         '<th>Temp (K)</th><th>Gravity (g)</th><th>Mass (EM)</th>'
-        '<th>Atmosphere</th><th>Star type</th>'
+        '<th>Atmosphere</th><th>Star type</th><th>Terraform</th>'
         '</tr></thead>'
         '<tbody>' + "".join(rows) + '</tbody>'
         '</table></div>'
@@ -1602,6 +1683,7 @@ def _build_report(
     fig_he       = _he_distribution_chart(chart_df)
     fig_hz       = _habitable_zone_chart(chart_df)
     fig_companion = _star_mass_companion_chart(chart_df)
+    fig_terraform = _terraform_chart(chart_df)
     fig_mat      = _materials_chart(chart_df, mat)
 
     sections = [
@@ -1620,6 +1702,7 @@ def _build_report(
         _section("Parent Star Mass", c(fig_starmass)),
         _section("Habitable Zone Context", c(fig_hz)),
         _section("Primary vs Companion Star Mass", c(fig_companion)),
+        _section("Terraform State", c(fig_terraform)),
         _section("Surface Materials", c(fig_mat)),
         _section("All Candidates", _candidates_table(df)),
         _section("Oddities (excluded from charts)", _oddities_table(df)),
