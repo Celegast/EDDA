@@ -20,8 +20,9 @@ from tkinter import messagebox, ttk
 from . import __version__ as _VERSION
 from .config import (
     _EDDA_DIR,
-    get_active_commander, get_ui_state, list_commanders,
-    set_active_commander, set_ui_state,
+    get_active_commander, get_commander_db_path, get_selected_commanders,
+    get_ui_state, list_commanders,
+    set_active_commander, set_selected_commanders, set_ui_state,
 )
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
@@ -473,6 +474,9 @@ class _App(tk.Tk):
         self._task_thread: threading.Thread | None = None
         self._qb_proc: subprocess.Popen | None = None
         self._commanders: list[str] = []
+        self._cmdr_check_vars: dict[str, tk.BooleanVar] = {}
+        self._cmdr_row_lbls: dict[str, tk.Label] = {}
+        self._cmdr_selected_name: str | None = None
         self._widgets: dict[str, dict] = {}
         self._frames:  dict[str, ttk.Frame] = {}
         self._current_task: str | None = None
@@ -493,15 +497,31 @@ class _App(tk.Tk):
         cf.pack(fill="x", padx=12, pady=(12, 4))
         inner = ttk.Frame(cf)
         inner.pack(fill="x")
-        lb_wrap = ttk.Frame(inner, style="Dark.TFrame")
+
+        lb_wrap = tk.Frame(inner, bg=_BG, highlightthickness=1,
+                           highlightbackground=_BORDER)
         lb_wrap.pack(side="left", fill="both", expand=True)
-        self._cmdr_lb = tk.Listbox(
-            lb_wrap, height=4, selectmode="single", exportselection=False,
-            bg=_BG, fg=_TEXT, selectbackground=_ACCENT, selectforeground=_BG,
-            borderwidth=0, highlightthickness=1, highlightbackground=_BORDER,
-            highlightcolor=_ACCENT, activestyle="none", font=_FONT,
+        self._cmdr_canvas = tk.Canvas(
+            lb_wrap, bg=_BG, highlightthickness=0, height=82,
         )
-        self._cmdr_lb.pack(fill="both", expand=True)
+        cmdr_vsb = ttk.Scrollbar(lb_wrap, orient="vertical",
+                                  command=self._cmdr_canvas.yview)
+        cmdr_vsb.pack(side="right", fill="y")
+        self._cmdr_canvas.pack(side="left", fill="both", expand=True)
+        self._cmdr_canvas.configure(yscrollcommand=cmdr_vsb.set)
+
+        self._cmdr_inner = tk.Frame(self._cmdr_canvas, bg=_BG)
+        self._cmdr_canvas_win = self._cmdr_canvas.create_window(
+            (0, 0), window=self._cmdr_inner, anchor="nw")
+        self._cmdr_inner.bind(
+            "<Configure>",
+            lambda e: self._cmdr_canvas.configure(
+                scrollregion=self._cmdr_canvas.bbox("all")))
+        self._cmdr_canvas.bind(
+            "<Configure>",
+            lambda e: self._cmdr_canvas.itemconfig(
+                self._cmdr_canvas_win, width=e.width))
+
         rp = ttk.Frame(inner)
         rp.pack(side="left", padx=(10, 0), fill="y")
         ttk.Button(rp, text="Set Active", command=self._switch_cmdr).pack()
@@ -650,25 +670,73 @@ class _App(tk.Tk):
     def _refresh_commanders(self) -> None:
         self._commanders = list_commanders()
         active = get_active_commander()
-        self._cmdr_lb.delete(0, "end")
-        for i, name in enumerate(self._commanders):
+        saved_sel = set(get_selected_commanders())
+
+        for w in self._cmdr_inner.winfo_children():
+            w.destroy()
+        self._cmdr_check_vars.clear()
+        self._cmdr_row_lbls.clear()
+
+        for name in self._commanders:
+            is_checked = name in saved_sel if saved_sel else name == active
+            var = tk.BooleanVar(value=is_checked)
+            self._cmdr_check_vars[name] = var
+
+            row = tk.Frame(self._cmdr_inner, bg=_BG, cursor="hand2")
+            row.pack(fill="x")
+
+            def _on_toggle(n=name) -> None:
+                checked = [c for c, v in self._cmdr_check_vars.items() if v.get()]
+                set_selected_commanders(checked)
+
+            cb = tk.Checkbutton(
+                row, variable=var,
+                bg=_BG, activebackground=_BG,
+                selectcolor=_ACCENT, relief="flat", bd=0,
+                command=lambda n=name: _on_toggle(n),
+            )
+            cb.pack(side="left", padx=(4, 0))
+
             is_active = name == active
-            self._cmdr_lb.insert("end", f"  {'●' if is_active else '○'}  {name}")
-            self._cmdr_lb.itemconfig(i, fg=_GREEN if is_active else _TEXT)
-            if is_active:
-                self._cmdr_lb.selection_set(i)
-                self._cmdr_lb.see(i)
+            lbl = tk.Label(
+                row,
+                text=f"{'●' if is_active else '○'}  {name}",
+                bg=_BG, fg=_GREEN if is_active else _TEXT,
+                font=_FONT,
+            )
+            lbl.pack(side="left", padx=(2, 6))
+            self._cmdr_row_lbls[name] = lbl
+
+            def _select(_, n=name) -> None:
+                self._cmdr_selected_name = n
+                self._highlight_cmdr()
+
+            for w in (row, lbl, cb):
+                w.bind("<Button-1>", _select)
+
+        if self._cmdr_selected_name not in self._commanders:
+            self._cmdr_selected_name = active
+        self._highlight_cmdr()
         self._cmdr_lbl.config(text=f"Active: {active or '(none)'}")
 
+    def _highlight_cmdr(self) -> None:
+        active = get_active_commander()
+        for name, lbl in self._cmdr_row_lbls.items():
+            is_active = name == active
+            if name == self._cmdr_selected_name:
+                lbl.config(bg=_SURF2)
+                lbl.master.config(bg=_SURF2)
+            else:
+                lbl.config(bg=_BG, fg=_GREEN if is_active else _TEXT)
+                lbl.master.config(bg=_BG)
+
     def _switch_cmdr(self) -> None:
-        sel = self._cmdr_lb.curselection()
-        if not sel:
-            messagebox.showinfo("EDDA", "Select a commander first.")
+        if not self._cmdr_selected_name:
+            messagebox.showinfo("EDDA", "Click a commander row to select it.")
             return
-        name = self._commanders[sel[0]]
-        set_active_commander(name)
+        set_active_commander(self._cmdr_selected_name)
         self._refresh_commanders()
-        self._log(f"Active commander: {name}\n", "ok")
+        self._log(f"Active commander: {self._cmdr_selected_name}\n", "ok")
 
     # ── Task options ───────────────────────────────────────────────────────────
 
@@ -701,6 +769,11 @@ class _App(tk.Tk):
     def _build_args(self, key: str) -> list[str] | None:
         g = lambda fk, ph="": self._val(key, fk, ph)
         args: list[str] = []
+
+        if key != "import":
+            checked = [n for n, v in self._cmdr_check_vars.items() if v.get()]
+            for n in checked:
+                args += ["--db", str(get_commander_db_path(n))]
 
         if key == "import":
             jdir = g("journal_dir", "default: ED saved games")

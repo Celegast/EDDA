@@ -29,10 +29,21 @@ from .analysis import stratum_report as sr
 
 def _db_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--db", type=Path, default=None,
+        "--db", type=Path, action="append", default=None,
         metavar="PATH",
-        help=f"Path to SQLite database (default: {get_db_path()})",
+        help="Path to SQLite database (default: active commander's DB). "
+             "Repeat to merge data from multiple commanders.",
     )
+
+
+def _open_report_db(db_paths: list[Path] | None):
+    """Open the DB for a reporting command, merging sources when needed."""
+    if not db_paths:
+        return open_db(None)
+    if len(db_paths) == 1:
+        return open_db(db_paths[0])
+    from .db.merge import merge_databases
+    return open_db(merge_databases(db_paths))
 
 
 def _out_arg(parser: argparse.ArgumentParser, default: str = "output") -> None:
@@ -77,7 +88,7 @@ def cmd_import(argv: list[str] | None = None) -> None:
             verbose=not args.quiet,
         )
     else:
-        conn = open_db(args.db)
+        conn = open_db(args.db[0] if args.db else None)
         try:
             run_import(conn,
                        journal_dir=args.journal_dir,
@@ -99,7 +110,7 @@ def cmd_stats(argv: list[str] | None = None) -> None:
     _db_arg(parser)
     args = parser.parse_args(argv)
 
-    conn = open_db(args.db)
+    conn = _open_report_db(args.db)
     try:
         data = st.summary(conn)
         print("\n=== Elite Dangerous — Exploration Summary ===\n")
@@ -176,7 +187,7 @@ def cmd_trip(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    conn = open_db(args.db)
+    conn = _open_report_db(args.db)
     try:
         data = st.trip_summary(conn, args.date_from, args.date_to)
 
@@ -304,7 +315,7 @@ def cmd_map(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    conn = open_db(args.db)
+    conn = _open_report_db(args.db)
     try:
         print("Loading system data...")
         df = st.systems_for_map(conn)
@@ -364,7 +375,7 @@ def cmd_charts(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    conn = open_db(args.db)
+    conn = _open_report_db(args.db)
 
     try:
         static = not args.interactive_only
@@ -484,7 +495,7 @@ def cmd_dashboard(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    conn = open_db(args.db)
+    conn = _open_report_db(args.db)
     try:
         db.build_dashboard(conn, args.out)
     finally:
@@ -550,7 +561,7 @@ def cmd_stratum(argv: list[str] | None = None) -> None:
         sr.build_stratum_report_from_files(paths, args.out)
         return
 
-    conn = open_db(args.db)
+    conn = _open_report_db(args.db)
     try:
         if args.export:
             print("Exporting Stratum candidates...")

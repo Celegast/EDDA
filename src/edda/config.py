@@ -75,6 +75,26 @@ def get_active_db_path() -> Optional[Path]:
     return get_commander_db_path(name) if name is not None else None
 
 
+def get_selected_commanders() -> list[str]:
+    """Return commanders checked for multi-DB report generation.
+
+    Falls back to [active_commander] when nothing has been explicitly selected.
+    """
+    cfg = _load()
+    saved = cfg.get("selected_commanders")
+    if saved is not None:
+        return [s for s in saved if s]
+    active = get_active_commander()
+    return [active] if active else []
+
+
+def set_selected_commanders(names: list[str]) -> None:
+    """Persist the set of commanders selected for reports."""
+    cfg = _load()
+    cfg["selected_commanders"] = names
+    _save(cfg)
+
+
 # ── UI state (persisted per-key under config["ui"]) ───────────────────────────
 
 def get_ui_state() -> dict:
