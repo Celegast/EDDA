@@ -326,9 +326,12 @@ class _IconBtn(tk.Frame):
 class _DateEntry(tk.Frame):
     """Entry + calendar popup for YYYY-MM-DD date selection."""
 
-    def __init__(self, parent: tk.Widget, value: str = "", **kw) -> None:
+    def __init__(self, parent: tk.Widget, value: str = "",
+                 on_change=None, **kw) -> None:
         super().__init__(parent, bg=_SURF, **kw)
         self._var = tk.StringVar(value=value)
+        if on_change is not None:
+            self._var.trace_add("write", lambda *_: on_change())
         self._e = ttk.Entry(self, textvariable=self._var, width=12)
         self._e.pack(side="left")
         btn = tk.Label(self, text="\U0001f4c5", bg=_SURF, fg=_MUTED,
@@ -585,12 +588,14 @@ class _App(tk.Tk):
             self._txt.tag_configure(tag, foreground=fg)
 
     def _entry(self, parent: tk.Widget, label: str,
-               value: str, ph: str = "") -> tk.StringVar:
+               value: str, ph: str = "", on_change=None) -> tk.StringVar:
         f = ttk.Frame(parent)
         f.pack(fill="x", pady=2)
         ttk.Label(f, text=label, width=28, anchor="w",
                   style="Dim.TLabel").pack(side="left")
         v = tk.StringVar(value=value if value else (ph or ""))
+        if on_change is not None:
+            v.trace_add("write", lambda *_: on_change())
         e = ttk.Entry(f, textvariable=v, width=36)
         e.pack(side="left")
         if ph and not value:
@@ -608,18 +613,20 @@ class _App(tk.Tk):
         return v
 
     def _date_entry(self, parent: tk.Widget, label: str,
-                    value: str) -> _DateEntry:
+                    value: str, on_change=None) -> _DateEntry:
         f = ttk.Frame(parent)
         f.pack(fill="x", pady=2)
         ttk.Label(f, text=label, width=28, anchor="w",
                   style="Dim.TLabel").pack(side="left")
-        de = _DateEntry(f, value=value)
+        de = _DateEntry(f, value=value, on_change=on_change)
         de.pack(side="left")
         return de
 
     def _check(self, parent: tk.Widget, label: str,
-               value: bool) -> tk.BooleanVar:
+               value: bool, on_change=None) -> tk.BooleanVar:
         v = tk.BooleanVar(value=value)
+        if on_change is not None:
+            v.trace_add("write", lambda *_: on_change())
         ttk.Checkbutton(parent, text=label, variable=v).pack(anchor="w", pady=2)
         return v
 
@@ -647,15 +654,19 @@ class _App(tk.Tk):
                 lbl = ("Open output folder when done"
                        if fk == "open_after" and key == "charts"
                        else labels[fk])
+                # Persist this field the moment the user changes it, not only
+                # when the task button is clicked.
+                on_change = (lambda k=key, f=fk, u=uk, p=ph:
+                             self._persist_field(u, self._val(k, f, p or "")))
                 if isinstance(default, bool):
                     val = bool(stored) if stored is not None else default
-                    w[fk] = self._check(f, lbl, val)
+                    w[fk] = self._check(f, lbl, val, on_change=on_change)
                 elif (key, fk) in _DATE_FIELDS:
                     val = str(stored) if stored else default
-                    w[fk] = self._date_entry(f, lbl, val)
+                    w[fk] = self._date_entry(f, lbl, val, on_change=on_change)
                 else:
                     val = str(stored) if stored else default
-                    w[fk] = self._entry(f, lbl, val, ph or "")
+                    w[fk] = self._entry(f, lbl, val, ph or "", on_change=on_change)
             ttk.Button(f, text={
                 "import": "Run Import", "dashboard": "Build Dashboard",
                 "stratum": "Build Report", "charts": "Build Charts",
@@ -757,6 +768,11 @@ class _App(tk.Tk):
             return v.get()
         s = v.get().strip()
         return "" if (not s or s == ph) else s
+
+    def _persist_field(self, uk: str, value) -> None:
+        """Save one option field immediately when the user edits it."""
+        set_ui_state({uk: value})
+        self._ui[uk] = value
 
     def _save(self, key: str) -> None:
         updates: dict = {}
