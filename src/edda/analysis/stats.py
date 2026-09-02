@@ -87,32 +87,36 @@ def summary(conn: sqlite3.Connection) -> dict:
 
 
 def personal_records(conn: sqlite3.Connection) -> pd.DataFrame:
-    """Personal bests across all scanned bodies."""
+    """Personal bests across all scanned bodies.
+
+    The ``Direction`` column ("high"/"low") says which way beats the record —
+    used to detect broken records between dashboard builds.
+    """
     queries = [
-        ("Highest gravity",  "g",
+        ("Highest gravity",  "g", "high",
          "SELECT name, system_address, surface_gravity_g AS value FROM bodies WHERE surface_gravity_g IS NOT NULL ORDER BY surface_gravity_g DESC LIMIT 1"),
-        ("Lowest gravity",   "g",
+        ("Lowest gravity",   "g", "low",
          "SELECT name, system_address, surface_gravity_g AS value FROM bodies WHERE surface_gravity_g > 0 ORDER BY surface_gravity_g ASC LIMIT 1"),
-        ("Hottest surface",  "K",
+        ("Hottest surface",  "K", "high",
          "SELECT name, system_address, surface_temp_k AS value FROM bodies WHERE surface_temp_k IS NOT NULL ORDER BY surface_temp_k DESC LIMIT 1"),
-        ("Coldest surface",  "K",
+        ("Coldest surface",  "K", "low",
          "SELECT name, system_address, surface_temp_k AS value FROM bodies WHERE surface_temp_k > 0 ORDER BY surface_temp_k ASC LIMIT 1"),
-        ("Largest radius",   "km",
+        ("Largest radius",   "km", "high",
          "SELECT name, system_address, radius_km AS value FROM bodies WHERE radius_km IS NOT NULL ORDER BY radius_km DESC LIMIT 1"),
-        ("Smallest radius",  "km",
+        ("Smallest radius",  "km", "low",
          "SELECT name, system_address, radius_km AS value FROM bodies WHERE radius_km > 0 ORDER BY radius_km ASC LIMIT 1"),
-        ("Most bio signals", "",
+        ("Most bio signals", "", "high",
          "SELECT name, system_address, bio_signals AS value FROM bodies ORDER BY bio_signals DESC LIMIT 1"),
-        ("Largest ring",     "km",
+        ("Largest ring",     "km", "high",
          "SELECT b.name, b.system_address, MAX(r.outer_rad) / 1000.0 AS value"
          " FROM rings r JOIN bodies b ON b.system_address=r.system_address AND b.body_id=r.body_id"
          " WHERE r.name NOT LIKE '% Belt'"
          " GROUP BY b.system_address, b.body_id, b.name ORDER BY MAX(r.outer_rad) DESC LIMIT 1"),
-        ("Longest jump",     "ly",
+        ("Longest jump",     "ly", "high",
          "SELECT s.name, j.system_address, j.jump_dist AS value FROM jumps j JOIN systems s ON s.system_address=j.system_address ORDER BY jump_dist DESC LIMIT 1"),
     ]
     rows = []
-    for label, unit, sql in queries:
+    for label, unit, direction, sql in queries:
         row = conn.execute(sql).fetchone()
         if row:
             rows.append({
@@ -121,6 +125,7 @@ def personal_records(conn: sqlite3.Connection) -> pd.DataFrame:
                 "system_address":   row[1],
                 "Value":            round(float(row[2]), 3),
                 "Unit":             unit,
+                "Direction":        direction,
             })
     return pd.DataFrame(rows)
 

@@ -15,6 +15,7 @@ import json
 import math
 import re
 import sqlite3
+from datetime import datetime, timezone
 from edda import __version__ as _edda_version
 from pathlib import Path
 
@@ -2088,6 +2089,96 @@ def _records_table_html(df: pd.DataFrame) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Personal-record comparison between dashboard builds
+# ---------------------------------------------------------------------------
+
+# leaderboard label -> (dataframe key, metric column). All are "higher is better".
+_LEADER_METRICS = {
+    "Most Bodies":      "body_count",
+    "Most Stars":       "star_count",
+    "Most Bio Signals": "bio_signals",
+    "Top Exobiology":   "total_value",
+    "Top Exploration":  "total_value",
+}
+
+
+def _records_snapshot(records_df: pd.DataFrame,
+                      leaders: dict[str, pd.DataFrame]) -> dict:
+    """Flatten the current records into {label: {value, name, unit, dir}}."""
+    snap: dict[str, dict] = {}
+    for _, r in records_df.iterrows():
+        snap[str(r["Record"])] = {
+            "value": float(r["Value"]),
+            "name":  str(r["Body / System"]),
+            "unit":  str(r.get("Unit", "")).strip(),
+            "dir":   str(r.get("Direction", "high")),
+        }
+    for label, df in leaders.items():
+        col = _LEADER_METRICS.get(label)
+        if not col or df is None or df.empty or col not in df.columns:
+            continue
+        row = df.iloc[0]
+        snap[label] = {
+            "value": float(row[col]),
+            "name":  str(row.get("name", "")),
+            "unit":  "",
+            "dir":   "high",
+        }
+    return snap
+
+
+def _diff_records(current: dict, previous: dict) -> list[dict]:
+    """Records present in both snapshots whose value improved in `current`."""
+    broken = []
+    for label, cur in current.items():
+        prev = previous.get(label)
+        if not prev:
+            continue  # new metric / first build — not "broken"
+        old, new = float(prev["value"]), float(cur["value"])
+        eps = max(abs(old), abs(new)) * 1e-9
+        improved = (new > old + eps) if cur.get("dir") == "high" else (new < old - eps)
+        if improved:
+            broken.append({
+                "record": label,
+                "old":    old,
+                "new":    new,
+                "unit":   cur.get("unit", ""),
+                "name":   cur.get("name", ""),
+            })
+    return broken
+
+
+def _write_records_diff(broken: list[dict], since: str | None,
+                        out_path: Path) -> None:
+    """Drop a fresh .edda/records_diff.json for the GUI to pick up."""
+    from ..config import _EDDA_DIR
+    try:
+        _EDDA_DIR.mkdir(parents=True, exist_ok=True)
+        (_EDDA_DIR / "records_diff.json").write_text(json.dumps({
+            "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "since":    since,
+            "out":      str(out_path.resolve()),
+            "broken":   broken,
+        }, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _check_broken_records(records_df: pd.DataFrame,
+                          leaders: dict[str, pd.DataFrame],
+                          out_path: Path) -> list[dict]:
+    """Snapshot current records, diff against the previous build, persist both."""
+    from ..config import get_records_snapshot, set_records_snapshot
+    key = str(out_path.resolve())
+    prev = get_records_snapshot(key)
+    cur = _records_snapshot(records_df, leaders)
+    broken = _diff_records(cur, prev.get("records", {}))
+    set_records_snapshot(key, cur)
+    _write_records_diff(broken, prev.get("updated_at"), out_path)
+    return broken
+
+
+# ---------------------------------------------------------------------------
 # Catalogue helpers
 # ---------------------------------------------------------------------------
 
@@ -3552,6 +3643,15 @@ def build_dashboard(conn: sqlite3.Connection, out_path: Path) -> None:
     df_top_exobio = st.top_systems_by_exobio_value(conn)
     df_top_explor = st.top_systems_by_exploration_value(conn)
     df_top_stars  = st.top_systems_by_stars(conn)
+
+    _broken = _check_broken_records(records, {
+        "Most Bodies": df_top_bodies, "Most Stars": df_top_stars,
+        "Most Bio Signals": df_top_bio, "Top Exobiology": df_top_exobio,
+        "Top Exploration": df_top_explor,
+    }, out_path)
+    if _broken:
+        print(f"    {len(_broken)} personal record(s) broken since last build")
+
     sections.append(_section("records", "Personal Records",
         _tab_group("records", [
             ("Miscellaneous",    _records_table_html(records)),

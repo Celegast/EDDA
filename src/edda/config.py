@@ -1,6 +1,7 @@
 """Commander configuration — persistent state in .edda/config.json."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -106,4 +107,27 @@ def set_ui_state(updates: dict) -> None:
     """Merge updates into the UI state dict."""
     cfg = _load()
     cfg.setdefault("ui", {}).update(updates)
+    _save(cfg)
+
+
+# ── Personal-records snapshots (per dashboard output path) ────────────────────
+# Used to notice when a new dashboard build beats a previous personal best.
+# NOTE: keyed by the resolved dashboard output path. Rebuilding the same output
+# file from a different commander selection will compare across datasets.
+
+def get_records_snapshot(key: str) -> dict:
+    """Return the stored records snapshot for `key`, or {} if there is none.
+
+    Shape: {"updated_at": iso8601, "records": {label: {value, name, unit, dir}}}.
+    """
+    return _load().get("records", {}).get(key, {})
+
+
+def set_records_snapshot(key: str, records: dict) -> None:
+    """Store `records` as the latest snapshot for `key`, stamped with now()."""
+    cfg = _load()
+    cfg.setdefault("records", {})[key] = {
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "records": records,
+    }
     _save(cfg)

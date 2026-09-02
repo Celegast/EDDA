@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar as _cal
+import json
 import math
 import os
 import queue
@@ -10,6 +11,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import urllib.request
 import webbrowser
@@ -870,6 +872,7 @@ class _App(tk.Tk):
         args = self._build_args(key)
         if args is None:
             return
+        self._task_started = time.time()
         open_path = self._open_path(key)
         func = _TASK_FUNCS[key]
         code = f"from edda.cli import {func}; {func}({args!r})"
@@ -1039,12 +1042,51 @@ class _App(tk.Tk):
         self._txt.delete("1.0", "end")
         self._txt.config(state="disabled")
 
+    def _maybe_records_popup(self) -> None:
+        """After a dashboard build, pop a box if any personal records were beaten."""
+        f = _EDDA_DIR / "records_diff.json"
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        # Ignore a stale file left by an earlier/failed build.
+        try:
+            built = _datetime.fromisoformat(d.get("built_at", "")).timestamp()
+        except Exception:
+            return
+        if built < getattr(self, "_task_started", 0) - 5:
+            return
+        broken = d.get("broken") or []
+        if not broken:
+            return
+
+        def _num(v: float) -> str:
+            v = float(v)
+            return f"{v:,.0f}" if abs(v) >= 1e6 else f"{v:,.3f}".rstrip("0").rstrip(".")
+
+        lines = []
+        for r in broken[:12]:
+            unit = (r.get("unit") or "").strip()
+            suffix = f" {unit}" if unit else ""
+            lines.append(f"• {r['record']}:  {_num(r['old'])}{suffix}"
+                         f"  →  {_num(r['new'])}{suffix}"
+                         + (f"   ({r['name']})" if r.get("name") else ""))
+        if len(broken) > 12:
+            lines.append(f"…and {len(broken) - 12} more")
+        since = d.get("since")
+        head = (f"You beat {len(broken)} personal record"
+                f"{'s' if len(broken) != 1 else ''}"
+                + (f" since {since[:10]}" if since else "") + ":")
+        messagebox.showinfo("EDDA — New records!", head + "\n\n" + "\n".join(lines))
+
     def _poll(self) -> None:
         try:
             while True:
                 kind, data = self._queue.get_nowait()
                 if kind == "done":
                     self._log("> Done.\n", "ok")
+                    if data == "dashboard":
+                        self._maybe_records_popup()
                     self._schedule_poll(data)
                 elif kind == "open":
                     p = Path(data)
