@@ -70,7 +70,8 @@ def _overview_cards(data: dict) -> str:
         ("Bodies scanned", _n(data["bodies_scanned"])),
         ("Bodies mapped",  _n(data["bodies_mapped"])),
         ("First disc.",    _n(data["first_discoveries"])),
-        ("Bio bodies",     _n(data["bio_signals_bodies"])),
+        ("Bio bodies (detected)", _n(data["bio_signals_bodies"])),
+        ("Bio bodies (sampled)",  _n(data["bio_bodies_sampled"])),
         ("Exobio scans",   _n(data["organic_scans_done"])),
         ("Species",        _n(data["species_unique"])),
     ]
@@ -415,6 +416,7 @@ def _systems_table(sys_df: pd.DataFrame) -> str:
         f'<td class="num">{int(r["first_disc"])}</td>'
         f'<td class="num">{int(r["bio_bodies"])}</td>'
         f'<td class="num">{int(r["bio_signals"])}</td>'
+        f'<td class="num">{int(r["bio_sampled"])}</td>'
         f"</tr>"
         for _, r in sys_df.iterrows()
     )
@@ -422,7 +424,7 @@ def _systems_table(sys_df: pd.DataFrame) -> str:
         '<div class="table-wrap table-scroll"><table class="sortable">'
         "<thead><tr><th>Timestamp</th><th>System</th><th>Star class</th>"
         "<th>Dist (ly)</th><th>Bodies</th><th>1st disc</th>"
-        "<th>Bio bodies</th><th>Bio signals</th></tr></thead>"
+        "<th>Bio bodies</th><th>Bio signals</th><th>Bio sampled</th></tr></thead>"
         f"<tbody>{rows}</tbody></table></div>"
     )
 

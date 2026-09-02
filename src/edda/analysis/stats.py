@@ -73,7 +73,10 @@ def summary(conn: sqlite3.Connection) -> dict:
         "planets_landable":     scalar("SELECT COUNT(*) FROM bodies WHERE is_landable=1"),
         "first_discoveries":    scalar("SELECT COUNT(*) FROM bodies WHERE first_discovered=1"),
         "first_mapped":         scalar("SELECT COUNT(*) FROM bodies WHERE was_mapped=1 AND first_mapped=1"),
+        "bio_signals_detected": scalar("SELECT COALESCE(SUM(bio_signals),0) FROM bodies"),
         "bio_signals_bodies":   scalar("SELECT COUNT(*) FROM bodies WHERE bio_signals>0"),
+        "bio_bodies_sampled":   scalar("SELECT COUNT(DISTINCT system_address || '/' || body_id) "
+                                       "FROM organic_scans WHERE scan_state='Analyse'"),
         "organic_scans_done":   scalar("SELECT COUNT(*) FROM organic_scans WHERE scan_state='Analyse'"),
         "species_unique":       scalar("SELECT COUNT(DISTINCT species) FROM organic_scans WHERE scan_state='Analyse'"),
         "organic_credits":      scalar("SELECT COALESCE(SUM(total),0) FROM organic_sales"),
@@ -1657,9 +1660,19 @@ def trip_summary(conn: sqlite3.Connection,
         "first_mapped":       scalar("""
             SELECT COUNT(*) FROM bodies
             WHERE was_mapped=1 AND first_mapped=1 AND scanned_at >= ? AND scanned_at <= ?"""),
+        "bio_signals_detected": scalar("""
+            SELECT COALESCE(SUM(b.bio_signals),0) FROM bodies b
+            WHERE b.system_address IN (
+                SELECT DISTINCT system_address FROM jumps
+                WHERE timestamp >= ? AND timestamp <= ?)"""),
         "bio_signals_bodies": scalar("""
-            SELECT COUNT(*) FROM bodies
-            WHERE bio_signals>0 AND scanned_at >= ? AND scanned_at <= ?"""),
+            SELECT COUNT(*) FROM bodies b
+            WHERE b.bio_signals>0 AND b.system_address IN (
+                SELECT DISTINCT system_address FROM jumps
+                WHERE timestamp >= ? AND timestamp <= ?)"""),
+        "bio_bodies_sampled": scalar("""
+            SELECT COUNT(DISTINCT system_address || '/' || body_id) FROM organic_scans
+            WHERE scan_state='Analyse' AND timestamp >= ? AND timestamp <= ?"""),
         "organic_scans_done": scalar("""
             SELECT COUNT(*) FROM organic_scans
             WHERE scan_state='Analyse' AND timestamp >= ? AND timestamp <= ?"""),
@@ -1944,8 +1957,14 @@ def trip_systems_visited(conn: sqlite3.Connection,
         SELECT s.system_address, s.name, s.star_class, j.timestamp, j.jump_dist,
                COUNT(DISTINCT b.body_id)                                     AS bodies_scanned,
                COALESCE(SUM(b.first_discovered),0)                           AS first_disc,
-               COALESCE(SUM(CASE WHEN b.bio_signals>0 THEN 1 ELSE 0 END),0) AS bio_bodies,
-               COALESCE(SUM(b.bio_signals),0)                                AS bio_signals
+               (SELECT COUNT(*) FROM bodies bx
+                 WHERE bx.system_address = s.system_address
+                   AND bx.bio_signals > 0)                                   AS bio_bodies,
+               (SELECT COALESCE(SUM(bx.bio_signals),0) FROM bodies bx
+                 WHERE bx.system_address = s.system_address)                 AS bio_signals,
+               (SELECT COUNT(DISTINCT os.body_id) FROM organic_scans os
+                 WHERE os.system_address = s.system_address
+                   AND os.scan_state = 'Analyse')                            AS bio_sampled
         FROM jumps j
         JOIN systems s ON s.system_address = j.system_address
         LEFT JOIN bodies b ON b.system_address = j.system_address

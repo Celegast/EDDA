@@ -124,7 +124,9 @@ def cmd_stats(argv: list[str] | None = None) -> None:
             "planets_landable":     "  Landable planets",
             "first_discoveries":    "  First discoveries",
             "first_mapped":         "  First mapped (DSS, new)",
-            "bio_signals_bodies":   "Bodies with bio signals",
+            "bio_signals_detected": "Bio signals detected (FSS)",
+            "bio_signals_bodies":   "  Bodies with bio signals",
+            "bio_bodies_sampled":   "  Bodies sampled (analysed)",
             "organic_scans_done":   "Organic scans completed",
             "species_unique":       "  Unique species",
             "organic_credits":      "Exobiology credits earned",
@@ -204,7 +206,9 @@ def cmd_trip(argv: list[str] | None = None) -> None:
             "planets_landable":   "  Landable planets",
             "first_discoveries":  "  First discoveries",
             "first_mapped":       "  First mapped (DSS, new)",
-            "bio_signals_bodies": "Bodies with bio signals",
+            "bio_signals_detected": "Bio signals detected (FSS)",
+            "bio_signals_bodies": "  Bodies with bio signals",
+            "bio_bodies_sampled": "  Bodies sampled (analysed)",
             "organic_scans_done": "Organic scans completed",
             "species_unique":     "  Unique species",
             "organic_credits":    "Exobiology credits earned",
@@ -268,9 +272,9 @@ def cmd_trip(argv: list[str] | None = None) -> None:
             sys_df = st.trip_systems_visited(conn, args.date_from, args.date_to)
             if not sys_df.empty:
                 print(f"  {'Timestamp':<22} {'System':<35} {'Cl':>3} {'Dist':>7} "
-                      f"{'Bodies':>6} {'1stD':>4} {'Bio':>3}")
+                      f"{'Bodies':>6} {'1stD':>4} {'BioB':>4} {'BioSig':>6} {'Smp':>3}")
                 print(f"  {'-'*22} {'-'*35} {'--':>3} {'-------':>7} "
-                      f"{'------':>6} {'----':>4} {'---':>3}")
+                      f"{'------':>6} {'----':>4} {'----':>4} {'------':>6} {'---':>3}")
                 for _, r in sys_df.iterrows():
                     ts   = str(r["timestamp"])[:19].replace("T", " ")
                     name = str(r["name"])[:35]
@@ -279,8 +283,10 @@ def cmd_trip(argv: list[str] | None = None) -> None:
                     b    = int(r["bodies_scanned"])
                     fd   = int(r["first_disc"])
                     bio  = int(r["bio_bodies"])
+                    sig  = int(r["bio_signals"])
+                    smp  = int(r["bio_sampled"])
                     print(f"  {ts:<22} {name:<35} {sc:>3} {dist:>7.2f} "
-                          f"{b:>6} {fd:>4} {bio:>3}")
+                          f"{b:>6} {fd:>4} {bio:>4} {sig:>6} {smp:>3}")
             else:
                 print("  (no jumps in this range)")
 

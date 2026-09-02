@@ -79,6 +79,25 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     except Exception:
         pass
 
+    # Same fix for jumps: a --force reimport used to re-insert every FSDJump
+    # event already recorded, since the INSERT had no conflict target. One
+    # journal event is uniquely identified by (system_address, timestamp).
+    try:
+        conn.execute("""
+            DELETE FROM jumps
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM jumps
+                GROUP BY system_address, timestamp
+            )
+        """)
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_jumps_unique
+            ON jumps(system_address, timestamp)
+        """)
+    except Exception:
+        pass
+
     conn.commit()
     return conn
 

@@ -119,6 +119,7 @@ def handle_fsd_jump(event: dict, conn: sqlite3.Connection) -> None:
     conn.execute("""
         INSERT INTO jumps (system_address, timestamp, jump_dist, fuel_used, fuel_remaining)
         VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(system_address, timestamp) DO NOTHING
     """, (
         sa,
         event.get("timestamp"),
@@ -346,6 +347,37 @@ def handle_scan(event: dict, conn: sqlite3.Connection) -> None:
               ring.get("MassMT"), ring.get("InnerRad"), ring.get("OuterRad")))
 
 
+def _record_body_signals(conn: sqlite3.Connection, sa: int, body_id: int,
+                         body_name: str, bio_total: int, geo_total: int) -> None:
+    """
+    Upsert bio/geo signal counts onto a body.
+
+    FSSBodySignals fires right after the discovery honk — before the body's Scan
+    row exists — so a bare UPDATE matches nothing and the count is silently lost
+    (only DSS-mapped bodies, whose SAASignalsFound arrives after Scan, kept one).
+    Insert a stub row instead; handle_scan fills in the rest later and leaves
+    bio_signals/geo_signals untouched.
+    """
+    if bio_total <= 0 and geo_total <= 0:
+        return
+    if body_name:
+        conn.execute("""
+            INSERT INTO bodies (system_address, body_id, name, body_type,
+                                bio_signals, geo_signals)
+            VALUES (?, ?, ?, 'Planet', ?, ?)
+            ON CONFLICT(system_address, body_id) DO UPDATE SET
+                bio_signals = MAX(bodies.bio_signals, excluded.bio_signals),
+                geo_signals = MAX(bodies.geo_signals, excluded.geo_signals)
+        """, (sa, body_id, body_name, bio_total, geo_total))
+    else:
+        conn.execute("""
+            UPDATE bodies SET
+                bio_signals = MAX(bio_signals, ?),
+                geo_signals = MAX(geo_signals, ?)
+            WHERE system_address = ? AND body_id = ?
+        """, (bio_total, geo_total, sa, body_id))
+
+
 def handle_saa_signals_found(event: dict, conn: sqlite3.Connection) -> None:
     sa = event.get("SystemAddress")
     body_id = event.get("BodyID")
@@ -373,13 +405,8 @@ def handle_saa_signals_found(event: dict, conn: sqlite3.Connection) -> None:
             ON CONFLICT(system_address, body_id, genus) DO NOTHING
         """, (sa, body_id, genus, localised))
 
-    if bio_total > 0 or geo_total > 0:
-        conn.execute("""
-            UPDATE bodies SET
-                bio_signals = MAX(bio_signals, ?),
-                geo_signals = MAX(geo_signals, ?)
-            WHERE system_address = ? AND body_id = ?
-        """, (bio_total, geo_total, sa, body_id))
+    _record_body_signals(conn, sa, body_id, event.get("BodyName", ""),
+                         bio_total, geo_total)
 
 
 def handle_fss_body_signals(event: dict, conn: sqlite3.Connection) -> None:
@@ -400,13 +427,8 @@ def handle_fss_body_signals(event: dict, conn: sqlite3.Connection) -> None:
         elif "$SAA_SignalType_Geological;" in sig_type:
             geo_total += count
 
-    if bio_total > 0 or geo_total > 0:
-        conn.execute("""
-            UPDATE bodies SET
-                bio_signals = MAX(bio_signals, ?),
-                geo_signals = MAX(geo_signals, ?)
-            WHERE system_address = ? AND body_id = ?
-        """, (bio_total, geo_total, sa, body_id))
+    _record_body_signals(conn, sa, body_id, event.get("BodyName", ""),
+                         bio_total, geo_total)
 
 
 def handle_saa_scan_complete(event: dict, conn: sqlite3.Connection) -> None:

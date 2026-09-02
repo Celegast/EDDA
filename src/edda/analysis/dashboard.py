@@ -874,10 +874,15 @@ function _drawLegend() {
     var ir = 7;  // icon body radius
     var rx = ir * 1.9, ry = ir * 0.48, rot = Math.PI * 0.2;
     var items = [
-        { lbl: 'Bio signals', col: 'rgba(160,170,200,0.9)',
+        { lbl: 'Bio sampled', col: 'rgba(160,170,200,0.9)',
           draw: function(x,y) {
             ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
             ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(50,220,100,0.75)'; ctx.lineWidth=1.5; ctx.stroke();
+          }},
+        { lbl: 'Bio detected (not sampled)', col: 'rgba(160,170,200,0.9)',
+          draw: function(x,y) {
+            ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(50,220,100,0.35)'; ctx.lineWidth=1; ctx.setLineDash([2,2]); ctx.stroke(); ctx.setLineDash([]);
           }},
         { lbl: 'Mapped', col: 'rgba(160,170,200,0.9)',
           draw: function(x,y) {
@@ -902,11 +907,12 @@ function _drawLegend() {
           }},
     ];
 
-    // Two columns: items 0-2 left, items 3-4 right
+    // Two balanced columns
     var col1x = 16, col2x = W / 2, rowH = 30, startY = 22;
+    var half = Math.ceil(items.length / 2);
     items.forEach(function(item, i) {
-        var lx = i < 3 ? col1x : col2x;
-        var ly = startY + (i < 3 ? i : i - 3) * rowH;
+        var lx = i < half ? col1x : col2x;
+        var ly = startY + (i < half ? i : i - half) * rowH;
         item.draw(lx + ir, ly);
         ctx.font = '11px sans-serif';
         ctx.fillStyle = item.col; ctx.textAlign = 'left';
@@ -1058,8 +1064,10 @@ function _drawSysOrrery() {
 
     var lx = W - 14, ly = 14, lh = 14;
     var items = [];
-    if (planets.some(function(b){ return b.b > 0; }))
-        items.push({col:'rgba(50,220,100,0.75)', lbl:'Bio signals', ring:true});
+    if (planets.some(function(b){ return b.sp && b.sp.length; }))
+        items.push({col:'rgba(50,220,100,0.9)', lbl:'Bio sampled', ring:true});
+    if (planets.some(function(b){ return (b.b > 0) && !(b.sp && b.sp.length); }))
+        items.push({col:'rgba(50,220,100,0.5)', lbl:'Bio detected', dash:true});
     if (planets.some(function(b){ return b.f; }))
         items.push({col:'#ffee44', lbl:'First discovery', star:true});
     if (planets.some(function(b){ return b.w; }))
@@ -1067,8 +1075,9 @@ function _drawSysOrrery() {
     ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
     items.forEach(function(item) {
         ctx.fillStyle = item.col;
-        if (item.star) ctx.fillText('★ ' + item.lbl, lx, ly);
-        else           ctx.fillText('● ' + item.lbl, lx, ly);
+        if (item.star)      ctx.fillText('★ ' + item.lbl, lx, ly);
+        else if (item.dash) ctx.fillText('◌ ' + item.lbl, lx, ly);
+        else                ctx.fillText('● ' + item.lbl, lx, ly);
         ly += lh;
     });
     ctx.textAlign = 'left';
@@ -1336,9 +1345,18 @@ function _drawSys() {
             g.addColorStop(0, col); g.addColorStop(0.5, col + '55'); g.addColorStop(1, col + '00');
             ctx.fillStyle = g; ctx.beginPath(); ctx.arc(bx, by, br * 2, 0, Math.PI * 2); ctx.fill();
         }
-        if (b.b > 0) {
+        var _sampled = b.sp && b.sp.length;
+        if (_sampled || b.b > 0) {
             ctx.beginPath(); ctx.arc(bx, by, br + 3, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(50,220,100,0.75)'; ctx.lineWidth = 1.5; ctx.stroke();
+            if (_sampled) {
+                ctx.strokeStyle = 'rgba(50,220,100,0.75)'; ctx.lineWidth = 1.5;
+            } else {
+                // bio signals detected but not sampled — faint dashed ring
+                ctx.strokeStyle = 'rgba(50,220,100,0.35)'; ctx.lineWidth = 1;
+                ctx.setLineDash([2, 2]);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
         // Ring back arc — drawn before body so body fill covers the centre portion
         if (b.ri > 0) {
@@ -1415,7 +1433,8 @@ function _drawSys() {
             if (b.s) lines.push(b.s);
             if (b.t !== 'Star') {
                 if (b.d) lines.push(b.d.toFixed(1) + ' LS from arrival');
-                if (b.b > 0) lines.push('<span style="color:#44ee88">' + b.b + ' bio signal' + (b.b>1?'s':'') + '</span>');
+                var _ns = (b.sp && b.sp.length) || 0;
+                if (b.b > 0 || _ns > 0) lines.push('<span style="color:#44ee88">' + Math.max(b.b, _ns) + ' bio signal' + (Math.max(b.b,_ns)>1?'s':'') + '</span><span style="color:#7a9">&nbsp;·&nbsp;' + _ns + ' sampled</span>');
                 if (b.g > 0) lines.push('<span style="color:#ee8844">' + b.g + ' geo signal' + (b.g>1?'s':'') + '</span>');
                 if (b.ri > 0) lines.push(b.ri + ' ring' + (b.ri>1?'s':''));
                 if (b.l)     lines.push('<span style="color:#66cc88">Landable</span>');
@@ -2023,7 +2042,9 @@ def _summary_table_html(data: dict) -> str:
         "planets_landable":    "Landable planets",
         "first_discoveries":   "First discoveries",
         "first_mapped":        "First mapped",
+        "bio_signals_detected": "Bio signals detected",
         "bio_signals_bodies":  "Bodies with bio signals",
+        "bio_bodies_sampled":  "Bio bodies sampled",
         "organic_scans_done":  "Organic scans completed",
         "species_unique":      "Unique species",
         "organic_credits":     "Exobiology credits earned",
