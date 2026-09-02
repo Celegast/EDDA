@@ -1076,7 +1076,7 @@ def nearby_helium_boxels(
     conn: sqlite3.Connection,
     cur_pos: dict | None,
     max_dist: float = 5000,
-    he_threshold: float = 28.5,
+    he_threshold: float = 30.0,
     min_ggs: int = 3,
 ) -> pd.DataFrame:
     """
