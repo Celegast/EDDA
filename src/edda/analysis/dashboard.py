@@ -513,6 +513,7 @@ section h2 {
 .bx-item.active { background:#1e2244; border-left:2px solid #5566aa; }
 .bx-name { color:#aabbee; font-size:0.88em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .bx-cnt { color:#667; font-size:0.82em; text-align:right; }
+.bx-eff { color:#7bbf8a; font-size:0.74em; text-align:right; grid-column:2; white-space:nowrap; }
 .bx-sc { color:#5566aa; font-size:0.76em; grid-column:1; }
 .bx-hi { color:#6688bb; font-size:0.76em; grid-column:1/3; }
 .bx-detail { border:1px solid #1e2240; border-radius:4px; padding:1em;
@@ -1504,6 +1505,9 @@ function _drawSys() {
         });
         if (_bxSort === 'name') list.sort(function(a, b) { return a.n.localeCompare(b.n); });
         else if (_bxSort === 'fv') list.sort(function(a, b) { return (a.fv||'').localeCompare(b.fv||''); });
+        else if (_bxSort === 'eff') list.sort(function(a, b) {
+            return (a.eff == null ? 1e9 : a.eff) - (b.eff == null ? 1e9 : b.eff);
+        });
         // default 'cnt': already sorted descending from Python
         return list;
     }
@@ -1539,6 +1543,8 @@ function _drawSys() {
                 '<span class="bx-name">' + esc(bx.n) + '</span>'
                 + '<span class="bx-cnt">' + bx.cnt + '</span>'
                 + (sc ? '<span class="bx-sc">' + esc(sc) + '</span>' : '')
+                + '<span class="bx-eff" title="avg scan effort per system (0 fast – 9 slow)">'
+                + (bx.eff == null ? '—' : ('⏱ ' + bx.eff.toFixed(1))) + '</span>'
                 + (hi.length ? '<span class="bx-hi">' + hi.join(' · ') + '</span>' : '');
 
             div.addEventListener('click', function() {
@@ -1815,6 +1821,7 @@ function _drawSys() {
             + _badge('Terraformable', bx.tf)
             + _badge('Bio signals', bx.bio) + _badge('Geo signals', bx.geo)
             + (bx.he ? _badge('GG He%', bx.he[0] + '–' + bx.he[1] + '%') : '')
+            + (bx.eff != null ? _badge('Scan effort', bx.eff.toFixed(1) + ' / 9') : '')
             + '</div>'
             + '<p class="col-head">Star spectral distribution</p>'
             + _starChart(bx.stars)
@@ -3596,6 +3603,7 @@ def _build_boxels_section() -> str:
         '<button class="bx-sort-btn active" data-sort="cnt">Count▾</button>'
         '<button class="bx-sort-btn" data-sort="name">Name</button>'
         '<button class="bx-sort-btn" data-sort="fv">Date</button>'
+        '<button class="bx-sort-btn" data-sort="eff">Effort</button>'
         '</span>'
         '<span id="bx-count"></span>'
         '</div>'

@@ -35,6 +35,20 @@ _SECTOR_RE = re.compile(r"^(.*?)\s+[A-Z]{2}-[A-Z]\b")
 #           "Pueloe BZ-A d123"       → "Pueloe BZ-A d"
 _BOXEL_RE = re.compile(r"-\d+$|\d+$")
 
+# "Scan effort" index — how tedious a boxel's systems are to fully scan.
+# Per system: raw = _EFFORT_PLANET_W * planets + moons  (stars are free, a moon
+# costs far more than a planet). Averaged over the boxel's systems, then scaled
+# and clamped to a 0–9 index. Constants calibrated so star-only boxels score 0,
+# plain no-moon boxels ~1–3, and dense/moon-heavy boxels (e.g. helium-rich
+# gas-giant farm boxels) land at 8–9.
+_EFFORT_PLANET_W = 0.3
+_EFFORT_SCALE = 0.65
+
+
+def _scan_effort_raw(planets: int, moons: int) -> float:
+    """Per-system raw scan cost (unbounded); 0 for a star-only system."""
+    return _EFFORT_PLANET_W * planets + moons
+
 # He% ranges (from community data) where Stratum Tectonicas probability exceeds 5%.
 # Source: "Boxel Helium vs Tectonicas" chart — orange line above 5% threshold.
 _TECTONICAS_HE_RANGES: list[tuple[float, float]] = [
@@ -1433,6 +1447,9 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
     bx_he: dict[str, list] = defaultdict(list)
     # bio species: [bx][species_localised] = [sys_count, genus_localised, body_count]
     bx_species: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: [0, "", 0]))
+    # scan-effort accumulators: running sum of per-system effort, and system count
+    bx_eff_sum: dict[str, float] = {}
+    bx_eff_n: dict[str, int] = {}
 
     BATCH = 500
     for i in range(0, len(valid_sas), BATCH):
@@ -1448,6 +1465,26 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
             bx = sa_to_boxel.get(sa)
             if bx:
                 bx_stars[bx][subtype] += 1
+
+        # Per-system body composition → scan-effort score (stars are free).
+        # A moon = a Planet whose orbital parent is itself a Planet.
+        for sa, moons, planets in conn.execute(
+            f"""SELECT b.system_address,
+                    SUM(b.body_type='Planet' AND p.body_type='Planet'),
+                    SUM(b.body_type='Planet'
+                        AND (p.body_type IS NULL OR p.body_type<>'Planet'))
+                FROM bodies b
+                LEFT JOIN bodies p ON p.system_address = b.system_address
+                                  AND p.body_id = b.orbital_parent_id
+                WHERE b.system_address IN ({ph})
+                GROUP BY b.system_address""",
+            batch,
+        ):
+            bx = sa_to_boxel.get(sa)
+            if bx:
+                bx_eff_sum[bx] = bx_eff_sum.get(bx, 0.0) + _scan_effort_raw(
+                    planets or 0, moons or 0)
+                bx_eff_n[bx] = bx_eff_n.get(bx, 0) + 1
 
         # Planets aggregated per (system, subtype) — gives per-system presence flags
         for sa, subtype, has_tf, has_land, has_atm, bio, has_bio, geo, has_geo, cnt, tf_cnt, land_cnt, atm_cnt, bio_cnt in conn.execute(
@@ -1560,6 +1597,8 @@ def boxels_data(conn: sqlite3.Connection, min_systems: int = 2) -> list[dict]:
             "bio":    bio,
             "geo":    geo,
             "he":     [round(min(he_vals), 1), round(max(he_vals), 1)] if he_vals else None,
+            "eff":    (round(min(9.0, bx_eff_sum[bx] / bx_eff_n[bx] * _EFFORT_SCALE), 1)
+                       if bx_eff_n.get(bx) else None),
             "fv":     min(dates) if dates else None,
             "lv":     max(dates) if dates else None,
         })
