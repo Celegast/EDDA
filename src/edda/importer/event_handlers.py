@@ -861,5 +861,5 @@ KNOWN_IGNORED_EVENTS: frozenset[str] = frozenset({
     # Session bookkeeping / misc
     "Fileheader", "Commander", "Shutdown", "Progress", "Reputation",
     "Missions", "Passengers", "SetUserShipName", "Screenshot",
-    "BuyExplorationData", "Resupply",
+    "BuyExplorationData", "Resupply", "GameModeChange",
 })
