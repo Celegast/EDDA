@@ -9,6 +9,9 @@ dashboard.html
 # Test / reference data files
 *.txt
 
+# Local release-notes working file
+CHANGELOG.md
+
 # Python
 __pycache__/
 *.pyc
