@@ -879,12 +879,12 @@ function _drawLegend() {
         { lbl: 'Bio sampled', col: 'rgba(160,170,200,0.9)',
           draw: function(x,y) {
             ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
-            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(50,220,100,0.75)'; ctx.lineWidth=1.5; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(70,235,120,0.95)'; ctx.lineWidth=2.5; ctx.stroke();
           }},
         { lbl: 'Bio detected (not sampled)', col: 'rgba(160,170,200,0.9)',
           draw: function(x,y) {
             ctx.beginPath(); ctx.arc(x,y,ir,0,Math.PI*2); ctx.fillStyle='rgba(120,140,200,0.9)'; ctx.fill();
-            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(50,220,100,0.35)'; ctx.lineWidth=1; ctx.setLineDash([2,2]); ctx.stroke(); ctx.setLineDash([]);
+            ctx.beginPath(); ctx.arc(x,y,ir+2,0,Math.PI*2); ctx.strokeStyle='rgba(70,235,120,0.5)'; ctx.lineWidth=1.25; ctx.stroke();
           }},
         { lbl: 'Mapped', col: 'rgba(160,170,200,0.9)',
           draw: function(x,y) {
@@ -1067,9 +1067,9 @@ function _drawSysOrrery() {
     var lx = W - 14, ly = 14, lh = 14;
     var items = [];
     if (planets.some(function(b){ return b.sp && b.sp.length; }))
-        items.push({col:'rgba(50,220,100,0.9)', lbl:'Bio sampled', ring:true});
+        items.push({col:'rgba(70,235,120,0.95)', lbl:'Bio sampled', ring:true});
     if (planets.some(function(b){ return (b.b > 0) && !(b.sp && b.sp.length); }))
-        items.push({col:'rgba(50,220,100,0.5)', lbl:'Bio detected', dash:true});
+        items.push({col:'rgba(70,235,120,0.5)', lbl:'Bio detected', dash:true});
     if (planets.some(function(b){ return b.f; }))
         items.push({col:'#ffee44', lbl:'First discovery', star:true});
     if (planets.some(function(b){ return b.w; }))
@@ -1349,16 +1349,11 @@ function _drawSys() {
         }
         var _sampled = b.sp && b.sp.length;
         if (_sampled || b.b > 0) {
+            // sampled: bright thick ring;  detected only: dim thin ring (same hue)
             ctx.beginPath(); ctx.arc(bx, by, br + 3, 0, Math.PI * 2);
-            if (_sampled) {
-                ctx.strokeStyle = 'rgba(50,220,100,0.75)'; ctx.lineWidth = 1.5;
-            } else {
-                // bio signals detected but not sampled — faint dashed ring
-                ctx.strokeStyle = 'rgba(50,220,100,0.35)'; ctx.lineWidth = 1;
-                ctx.setLineDash([2, 2]);
-            }
+            ctx.strokeStyle = _sampled ? 'rgba(70,235,120,0.95)' : 'rgba(70,235,120,0.5)';
+            ctx.lineWidth = _sampled ? 2.5 : 1.25;
             ctx.stroke();
-            ctx.setLineDash([]);
         }
         // Ring back arc — drawn before body so body fill covers the centre portion
         if (b.ri > 0) {
