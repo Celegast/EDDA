@@ -923,7 +923,7 @@ class _App(tk.Tk):
                 if commits:
                     self._queue.put(("line",
                         f"Updates available:\n{commits}\n"
-                        f"Run update.bat / update.ps1 / update.sh to apply.\n"))
+                        f"Run update.bat / update.sh to apply.\n"))
                 else:
                     self._queue.put(("line", "Already up to date.\n"))
             except FileNotFoundError:

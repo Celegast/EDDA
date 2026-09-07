@@ -84,13 +84,6 @@ A personal exploration analytics tool for Elite Dangerous. Parses your journal f
 setup.bat
 ```
 
-**Windows (PowerShell — requires execution policy to be set):**
-```powershell
-.\setup.ps1
-```
-> If you see a script execution error, run it without changing execution policy:
-> `powershell.exe -ExecutionPolicy Bypass -File .\setup.ps1`
-
 **Linux / macOS:**
 ```bash
 chmod +x setup.sh
@@ -107,13 +100,6 @@ Run this once to pull the latest code, sync dependencies, re-import journals, an
 ```bat
 update.bat
 ```
-
-**Windows (PowerShell — requires execution policy to be set):**
-```powershell
-.\update.ps1
-```
-> If you see a script execution error, run it without changing execution policy:
-> `powershell.exe -ExecutionPolicy Bypass -File .\update.ps1`
 
 **Linux / macOS:**
 ```bash
@@ -387,7 +373,6 @@ The server runs at `http://localhost:5000/` (or the specified port) and can be s
 | Script | Platform |
 |---|---|
 | `serve.bat` | Windows — double-click or run in any terminal |
-| `serve.ps1` | Windows PowerShell |
 | `serve.sh` | Linux / macOS |
 
 #### Builder mode
