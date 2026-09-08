@@ -452,7 +452,7 @@ _TASK_FIELDS: dict[str, list[tuple]] = {
     "trip": [
         ("from",       "trip_from",       "", "YYYY-MM-DD"),
         ("to",         "trip_to",         "", "YYYY-MM-DD"),
-        ("html_out",   "trip_html_out",   "", "trip_report.html"),
+        ("html_out",   "trip_html_out",   "trip_report.html", None),
         ("systems",    "trip_systems",    False, None),
         ("open_after", "trip_open_after", False, None),
     ],
@@ -826,7 +826,7 @@ class _App(tk.Tk):
                     "Trip report requires both From and To dates.")
                 return None
             args += ["--from", fr, "--to", to]
-            ho = g("html_out", "trip_report.html")
+            ho = g("html_out")
             if ho:
                 args += ["--html", ho]
             if g("systems"):
@@ -843,8 +843,8 @@ class _App(tk.Tk):
         fk = _OPEN_FIELD.get(key)
         if not fk:
             return None
-        ph = {"html_out": "trip_report.html", "out": ""}.get(fk, "")
-        return str(self._val(key, fk, ph)) or None
+        # every output field now carries a real default (no placeholder to filter)
+        return str(self._val(key, fk)) or None
 
     def _poll_interval(self, key: str) -> float:
         if "poll_minutes" not in self._widgets.get(key, {}):
