@@ -849,7 +849,7 @@ KNOWN_IGNORED_EVENTS: frozenset[str] = frozenset({
     # Social / crew / squadrons / wings
     "WingAdd", "WingJoin", "WingLeave", "WingInvite",
     "SquadronStartup", "SquadronPromotion", "JoinedSquadron", "InvitedToSquadron",
-    "SharedBookmarkToSquadron",
+    "SharedBookmarkToSquadron", "AppliedToSquadron", "SquadronApplicationApproved",
     "ChangeCrewRole", "CrewMemberJoins", "CrewMemberQuits", "CrewMemberRoleChange",
     "EndCrewSession", "JoinACrew", "KickCrewMember", "QuitACrew",
     # Colonisation
