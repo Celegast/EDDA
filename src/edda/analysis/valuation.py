@@ -413,7 +413,7 @@ def organic_value(
     is_first_log       — True if this was the first scan of this species on this body
     antal_bonus        — True if sold in Antal-controlled space
     """
-    if not species_localised:
+    if not isinstance(species_localised, str) or not species_localised.strip():
         return 0
 
     base = SPECIES_VALUES.get(species_localised.strip(), 0)

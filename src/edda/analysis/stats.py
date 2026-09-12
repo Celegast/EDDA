@@ -588,7 +588,8 @@ def organic_values_table(conn: sqlite3.Connection,
     first_log_budget: dict[str, int] = {}
 
     for _, r in df.iterrows():
-        sp = r["species_localised"] or ""
+        sp = r["species_localised"]
+        sp = sp.strip() if isinstance(sp, str) else ""
         sale_row = sales_map.get(sp)
 
         if sale_row is not None:
