@@ -168,15 +168,15 @@ def body_scan_value(
 
     Returns 0 for bodies with no planet class or mass (e.g. pure star records).
     """
-    if not planet_class or mass_em is None or mass_em <= 0:
+    if not isinstance(planet_class, str) or not planet_class or mass_em is None or mass_em <= 0:
         return 0
 
     key = planet_class.lower()
     key = re.sub(r"^sudarsky\s+", "", key)   # DB stores "Sudarsky class I gas giant"; key is "class i gas giant"
     k = BODY_BASE_K.get(key, 720)
 
-    is_terraformable = (key in _ALWAYS_TERRA) or bool(
-        terraform_state and terraform_state.lower() not in ("", "not terraformable")
+    is_terraformable = (key in _ALWAYS_TERRA) or (
+        isinstance(terraform_state, str) and terraform_state.lower() not in ("", "not terraformable")
     )
     if is_terraformable:
         k += TERRA_BONUS_K.get(key, 0)
