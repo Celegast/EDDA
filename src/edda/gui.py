@@ -334,7 +334,7 @@ class _DateEntry(tk.Frame):
         self._var = tk.StringVar(value=value)
         if on_change is not None:
             self._var.trace_add("write", lambda *_: on_change())
-        self._e = ttk.Entry(self, textvariable=self._var, width=12)
+        self._e = ttk.Entry(self, textvariable=self._var, width=19)
         self._e.pack(side="left")
         btn = tk.Label(self, text="\U0001f4c5", bg=_SURF, fg=_MUTED,
                        font=("Segoe UI Emoji", 11), cursor="hand2")
@@ -450,8 +450,8 @@ _TASK_FIELDS: dict[str, list[tuple]] = {
         ("open_after", "charts_open_after", False,    None),
     ],
     "trip": [
-        ("from",       "trip_from",       "", "YYYY-MM-DD"),
-        ("to",         "trip_to",         "", "YYYY-MM-DD"),
+        ("from",       "trip_from",       "", "YYYY-MM-DD[THH:MM]"),
+        ("to",         "trip_to",         "", "YYYY-MM-DD[THH:MM]"),
         ("html_out",   "trip_html_out",   "trip_report.html", None),
         ("systems",    "trip_systems",    False, None),
         ("open_after", "trip_open_after", False, None),
@@ -643,8 +643,8 @@ class _App(tk.Tk):
             "min_temp":     "Min temperature (K)",
             "max_temp":     "Max temperature (K)",
             "html_out":     "HTML output file",
-            "from":         "From (YYYY-MM-DD)",
-            "to":           "To   (YYYY-MM-DD)",
+            "from":         "From (YYYY-MM-DD[THH:MM])",
+            "to":           "To   (YYYY-MM-DD[THH:MM])",
             "systems":      "List all systems visited",
             "open_after":   "Open in browser when done",
         }
@@ -819,8 +819,8 @@ class _App(tk.Tk):
                 args += ["--out", str(g("out"))]
 
         elif key == "trip":
-            fr = g("from", "YYYY-MM-DD")
-            to = g("to",   "YYYY-MM-DD")
+            fr = g("from", "YYYY-MM-DD[THH:MM]")
+            to = g("to",   "YYYY-MM-DD[THH:MM]")
             if not fr or not to:
                 messagebox.showwarning("EDDA",
                     "Trip report requires both From and To dates.")
