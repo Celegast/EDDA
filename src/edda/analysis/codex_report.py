@@ -161,15 +161,21 @@ def load_canonn():
     return star_map, mat_map
 
 
-def load_found():
+def load_found(commander_names: set[str] = frozenset()):
     """(species,colour) -> regions where Found=1; region list; genus per species;
     sp_regions[species] -> regions where the species has ANY confirmed variant;
-    sp_here[region] -> species confirmed present there."""
+    sp_here[region] -> species confirmed present there;
+    my_firsts[region][species] -> colours YOU (commander_names) discovered there,
+    per the CodexEntries 'DiscoveredBy' column — an actual regional first you logged;
+    my_first_list -> the same, as a flat list of (region, species, colour, system, date)
+    for a summary table, most recent first."""
     found: dict[tuple, set] = collections.defaultdict(set)
     regions: set[str] = set()
     genus: dict[str, str] = {}
     sp_regions: dict[str, set] = collections.defaultdict(set)
     sp_here: dict[str, set] = collections.defaultdict(set)
+    my_firsts: dict[str, dict] = collections.defaultdict(lambda: collections.defaultdict(set))
+    my_first_list: list[tuple] = []
     for r in csv.DictReader(CE_TSV.open(encoding="utf-8"), delimiter="\t"):
         if r["Category"] != "Bio":
             continue
@@ -183,7 +189,12 @@ def load_found():
             found[(sp, col)].add(reg)
             sp_regions[sp].add(reg)
             sp_here[reg].add(sp)
-    return found, sorted(regions), genus, sp_regions, sp_here
+            discoverer = (r.get("DiscoveredBy") or "").strip().upper()
+            if discoverer and discoverer in commander_names:
+                my_firsts[reg][sp].add(col)
+                my_first_list.append((reg, sp, col, r.get("System", ""), r.get("DateDiscovered", "")))
+    my_first_list.sort(key=lambda x: x[4], reverse=True)
+    return found, sorted(regions), genus, sp_regions, sp_here, my_firsts, my_first_list
 
 
 def load_gaps():
@@ -236,6 +247,14 @@ for _c, _subs in {
 }.items():
     for _s in _subs:
         _SUBTYPE_STAR[_s] = _c
+
+
+def commander_names(conn: sqlite3.Connection) -> set[str]:
+    """Every distinct commander name recorded in the report DB (one, or several
+    if multiple commanders were merged), upper-cased for matching against the
+    CodexEntries 'DiscoveredBy' column."""
+    rows = conn.execute("SELECT DISTINCT name FROM commander_snapshots WHERE name IS NOT NULL").fetchall()
+    return {r[0].strip().upper() for r in rows if r[0] and r[0].strip()}
 
 
 def db_region_data(conn: sqlite3.Connection):
@@ -309,6 +328,7 @@ table.mx tr.mxtot td{border-bottom:2px solid #232838;color:#6f7890;font-variant-
 .done{background:#16241c}
 .confirmed{background:#0f1620}
 .mine{background:#4d5566}
+.myfirst{background:#3a0a1c;outline:2px solid #ff4fa0;box-shadow:0 0 8px #ff4fa099,inset 0 0 6px #ff4fa055;font-weight:700}
 .rf{background:#2b2410;outline:1px solid #6a5a24}
 .rfsoft{background:#1c1e26;outline:1px solid #333a48}
 .rfdead{background:#1a1720}
@@ -317,6 +337,7 @@ table.mx tr.mxtot td{border-bottom:2px solid #232838;color:#6f7890;font-variant-
 .na{background:#0e1017}
 .region{background:#11141f;border:1px solid #1e2333;border-radius:6px;padding:12px 16px;margin:12px 0}
 details>summary{cursor:pointer;color:#cdd6ea;font-size:1.02rem;padding:4px 0}
+summary.h2toggle{color:#dbe2f0;font-size:1.5em;font-weight:700;margin-top:2.2em;padding-bottom:.3em;border-bottom:1px solid #232838}
 .prof{font:11px/1.5 ui-monospace,monospace;color:#7c8598;margin:.3em 0}
 .hint{color:#9aa3b8;margin:.4em 0;max-width:90ch}
 .legend span{margin-right:16px}
@@ -358,7 +379,7 @@ def favicon_data_uri(size=32):
 
 def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             region_stars, cover, prof, personal_region, personal_global,
-            reconcile_total, out_path: Path) -> None:
+            my_firsts, my_first_list, reconcile_total, out_path: Path) -> None:
     NR = len(regions)
     COVER_OK = 250      # min systems visited to trust "this region has no such star"
     UNIVERSAL = 38      # confirmed in >= this many regions -> "occurs galaxy-wide"
@@ -423,6 +444,25 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         f"<b>{len(gf_reach)}</b> of them around ordinary stars. The galactic firsts are the same in every "
         f"region and have gone unfound across ~280&nbsp;million scanned systems, so the per-region view "
         f"below shows only regional firsts — those you can realistically be first to log.</p>")
+
+    # ---- your own regional firsts, as a flat table -------------------------
+    if my_first_list:
+        LONG_LIST = 10
+        n = len(my_first_list)
+        intro = (f"<p class='sub'>Every colour variant CodexEntries.tsv credits <b>you</b> as the discoverer "
+                 f"of, across all regions — <b>{n}</b> so far. Most recent first.</p>")
+        table = ["<table class='sum'><tr><th>Region</th><th>Species</th><th>Colour</th>"
+                 "<th>System</th><th>Date</th></tr>"]
+        for reg, sp, col, system, date in my_first_list:
+            table.append(f"<tr><td>{esc(reg)}</td><td>{esc(sp)}</td><td>{chip(col)} {esc(col)}</td>"
+                         f"<td class='sub'>{esc(system)}</td><td class='sub'>{esc(date[:10])}</td></tr>")
+        table.append("</table>")
+        if n > LONG_LIST:
+            P.append(f"<details><summary class='h2toggle'>\U0001f3c6 Your regional firsts "
+                     f"({n})</summary>" + intro + "".join(table) + "</details>")
+        else:
+            P.append(f"<h2>\U0001f3c6 Your regional firsts</h2>" + intro + "".join(table))
+
     # ---- ONE galactic-firsts matrix (region-independent) ------------------
     P.append("<h2>Galactic firsts — the whole-galaxy picture</h2>")
     P.append("<p class='sub'>Every species &times; star type. <b>★ / ?</b> = a variant believed to exist "
@@ -473,6 +513,7 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
     P.append("<p class='sub legend'>Region-matrix cells: "
              "<span class='done' style='padding:1px 6px'>found here</span>"
              "<span class='mine' style='padding:1px 6px'>in your codex</span>"
+             "<span class='myfirst' style='padding:1px 6px'>\U0001f3c6 you discovered this regional first</span>"
              "<span class='rf' style='padding:1px 6px'>regional first (species confirmed here)</span>"
              "<span class='rfsoft' style='padding:1px 6px'>species occurs galaxy-wide, not yet confirmed here</span>"
              "<span class='rfdead' style='padding:1px 6px'>region has ~no such star</span>"
@@ -530,7 +571,10 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                     cells.append("<td class='na'></td>")
                     continue
                 if reg in found.get((sp, col), ()):
-                    if star in personal_region.get(reg, {}).get(sp, ()):
+                    if col in my_firsts.get(reg, {}).get(sp, ()):
+                        cells.append(f"<td class='myfirst' title='{esc(sp)} – {esc(col)}: "
+                                     f"you discovered this regional first!'>\U0001f3c6{chip(col)}</td>")
+                    elif star in personal_region.get(reg, {}).get(sp, ()):
                         cells.append(f"<td class='mine' title='{esc(sp)} – {esc(col)}: in your codex'>{chip(col)}</td>")
                     else:
                         cells.append(f"<td class='done'>{chip(col)}</td>")
@@ -680,10 +724,11 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
 def build_codex_report(conn: sqlite3.Connection, out_path: Path) -> None:
     """Build and write the self-contained Odyssey Codex gap-analysis report."""
     star_map, mat_map = load_canonn()
-    found, regions, genus, sp_regions, sp_here = load_found()
+    cmdrs = commander_names(conn)
+    found, regions, genus, sp_regions, sp_here, my_firsts, my_first_list = load_found(cmdrs)
     gaps = load_gaps()
     region_stars, cover, prof, personal_region, personal_global = db_region_data(conn)
     reconcile_total = load_reconciliation_total()
     _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             region_stars, cover, prof, personal_region, personal_global,
-            reconcile_total, out_path)
+            my_firsts, my_first_list, reconcile_total, out_path)
