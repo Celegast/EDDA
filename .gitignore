@@ -5,6 +5,8 @@ edda.db
 # Generated output
 output/
 dashboard.html
+codex.html
+game_codex/*.tsv
 
 # Test / reference data files
 *.txt

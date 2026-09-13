@@ -7,6 +7,7 @@ Command-line entry points (run via pdm).
   pdm run map        — render galaxy maps
   pdm run charts     — render all charts
   pdm run dashboard  — build the single-page HTML dashboard
+  pdm run codex      — build the Odyssey Codex (exobiology) gap-analysis report
 """
 
 import argparse
@@ -21,6 +22,7 @@ from .analysis import charts as ch
 from .analysis import dashboard as db
 from .analysis import trip_report as tr
 from .analysis import stratum_report as sr
+from .analysis import codex_report as cx
 
 
 # ---------------------------------------------------------------------------
@@ -576,5 +578,42 @@ def cmd_stratum(argv: list[str] | None = None) -> None:
             print("Building Stratum Tectonicas report...")
             sr.build_stratum_report(conn, args.out,
                                     min_temp=args.min_temp, max_temp=args.max_temp)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# codex — Odyssey Codex (exobiology) gap-analysis report
+# ---------------------------------------------------------------------------
+
+def cmd_codex(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="pdm run codex",
+        description="Build the Odyssey Codex (exobiology) gap-analysis report.",
+    )
+    _db_arg(parser)
+    parser.add_argument(
+        "--out", type=Path, default=Path("codex.html"),
+        metavar="FILE",
+        help="Output HTML file (default: ./codex.html)",
+    )
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="re-download the source TSVs from Google Sheets before building the report",
+    )
+    args = parser.parse_args(argv)
+
+    if args.refresh:
+        print("Refreshing source sheets...")
+        if not cx.refresh_sources():
+            print("  one or more sheets failed to refresh — continuing with what's on disk")
+    missing = cx.missing_sources()
+    if missing:
+        sys.exit("missing: " + ", ".join(missing) + ("" if args.refresh else " (try --refresh)"))
+
+    conn = _open_report_db(args.db)
+    try:
+        print("Building Odyssey Codex report...")
+        cx.build_codex_report(conn, args.out)
     finally:
         conn.close()

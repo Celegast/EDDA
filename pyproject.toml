@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "edda"
-version = "1.0.2"
+version = "1.1.0"
 description = "Elite Dangerous Data Analyser — journal parser, database, and analytics dashboard"
 requires-python = ">=3.12"
 dependencies = [
@@ -28,5 +28,6 @@ map       = {call = "edda.cli:cmd_map"}
 charts    = {call = "edda.cli:cmd_charts"}
 dashboard = {call = "edda.cli:cmd_dashboard"}
 stratum   = {call = "edda.cli:cmd_stratum"}
+codex     = {call = "edda.cli:cmd_codex"}
 gui       = {call = "edda.gui:main"}
 serve     = {call = "edda.serve:main"}

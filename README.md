@@ -95,6 +95,16 @@ property distributions, correlation matrices, parent-star context. Auto-exports 
 per-commander JSONL; `--from-files "*.jsonl"` builds a combined multi-commander
 report with no database.
 
+**Odyssey Codex report** (`pdm run codex`) — cross-references Canonn's exobiology
+variant list against community discovery-tracking sheets to find *regional firsts*
+(colour variants not yet logged in a region, filtered to species actually known to
+occur there) and *galactic firsts* (variants nobody has ever logged anywhere). A
+by-star-type view ranks regions by opportunity, and colour variants you've
+personally logged are highlighted. `--refresh` re-downloads the source sheets from
+Google first (on by default in the desktop app).
+
+![Odyssey Codex galactic firsts matrix](docs/screenshots/odyssey_codex.png)
+
 **Query Builder** (`pdm run serve`, or `serve.bat` / `serve.sh`) — a local browser
 UI to query the database with dropdown conditions or raw SQL, with mixed AND/OR
 logic, a re-runnable history, CSV/TSV export, and clickable system links.
@@ -109,6 +119,7 @@ logic, a re-runnable history, CSV/TSV export, and clickable system links.
 | `pdm run dashboard` | Build `dashboard.html` | `--out FILE` |
 | `pdm run trip` | Trip stats / HTML report | `--from` `--to` (required), `--html PATH`, `--systems` |
 | `pdm run stratum` | Stratum research report | `--min-temp`/`--max-temp K`, `--export FILE`, `--from-files GLOB` |
+| `pdm run codex` | Odyssey Codex gap-analysis report | `--out FILE`, `--refresh` |
 | `pdm run map` | Galaxy & sector maps → `output/` | `--static-only`, `--interactive-only` |
 | `pdm run charts` | Analytics charts → `output/` | `--static-only`, `--interactive-only` |
 | `pdm run stats` | Lifetime summary to terminal | — |
@@ -161,7 +172,8 @@ src/edda/
     ├── charts.py  maps.py  matplotlib + Plotly figures
     ├── dashboard.py        HTML dashboard assembler
     ├── trip_report.py      HTML trip report
-    └── stratum_report.py   Stratum research report
+    ├── stratum_report.py   Stratum research report
+    └── codex_report.py     Odyssey Codex report
 ```
 
 ## Acknowledgements
@@ -171,3 +183,4 @@ src/edda/
 - [Canonn Research](https://canonn.science/) and the [ED community wiki](https://elite-dangerous.fandom.com/wiki/Elite_Dangerous_Wiki)
 - **CMDR Vithigar** & **CMDR MattG** — [Elite Observatory](https://github.com/Xjph/ObservatoryCore), which inspired many of EDDA's analytics
 - Beta testing: **[CMDR BacardEsan](https://www.twitch.tv/bacardesan)**
+- **CMDR Marxanthius** & the [Independent Explorers Association (IEA)](https://discord.gg/yCFNJdkY7D) Discord — outstanding work on exploration

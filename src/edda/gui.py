@@ -456,14 +456,20 @@ _TASK_FIELDS: dict[str, list[tuple]] = {
         ("systems",    "trip_systems",    False, None),
         ("open_after", "trip_open_after", False, None),
     ],
+    "codex": [
+        ("out",        "codex_out",        "codex.html", None),
+        ("refresh",    "codex_refresh",    True,  None),
+        ("open_after", "codex_open_after", False, None),
+    ],
 }
 _TASK_FUNCS = {
     "import": "cmd_import", "dashboard": "cmd_dashboard",
     "stratum": "cmd_stratum", "charts": "cmd_charts", "trip": "cmd_trip",
+    "codex": "cmd_codex",
 }
 _OPEN_FIELD = {
     "dashboard": "out", "stratum": "out",
-    "trip": "html_out", "charts": "out",
+    "trip": "html_out", "charts": "out", "codex": "out",
 }
 _DATE_FIELDS = {("trip", "from"), ("trip", "to")}
 
@@ -545,6 +551,7 @@ class _App(tk.Tk):
             ("\U0001f30e", "Stratum Report",   "stratum"),
             ("\U0001f4c8", "Build Charts",     "charts"),
             ("\U0001f559", "Trip Report",      "trip"),
+            ("\U0001f9ec", "Codex Report",     "codex"),
         ]:
             b = _IconBtn(br, icon, lbl, command=lambda k=key: self._toggle(k))
             b.pack(side="left", padx=3, pady=2)
@@ -647,6 +654,7 @@ class _App(tk.Tk):
             "to":           "To   (YYYY-MM-DD[THH:MM])",
             "systems":      "List all systems visited",
             "open_after":   "Open in browser when done",
+            "refresh":      "Re-download source sheets first",
         }
         for key, fields in _TASK_FIELDS.items():
             f = ttk.Frame(self._opts_wrap)
@@ -672,7 +680,7 @@ class _App(tk.Tk):
             ttk.Button(f, text={
                 "import": "Run Import", "dashboard": "Build Dashboard",
                 "stratum": "Build Report", "charts": "Build Charts",
-                "trip": "Build Trip Report",
+                "trip": "Build Trip Report", "codex": "Build Codex Report",
             }[key], style="Run.TButton",
                 command=lambda k=key: self._run(k)).pack(anchor="w", pady=(10, 2))
             self._frames[key] = f
@@ -831,6 +839,12 @@ class _App(tk.Tk):
                 args += ["--html", ho]
             if g("systems"):
                 args.append("--systems")
+
+        elif key == "codex":
+            if g("out"):
+                args += ["--out", str(g("out"))]
+            if g("refresh"):
+                args.append("--refresh")
 
         self._save(key)
         return args
