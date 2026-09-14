@@ -180,7 +180,9 @@ CREATE TABLE IF NOT EXISTS organic_sales (
 
 CREATE INDEX IF NOT EXISTS idx_orgsales_ts ON organic_sales(timestamp);
 
--- Codex entries — first-in-region discoveries.
+-- Codex entries — first-in-system discoveries (one row per entry type per
+-- system, so the same NSP type found in multiple systems within a region
+-- is tallied separately instead of collapsing to a single regional row).
 CREATE TABLE IF NOT EXISTS codex_entries (
     id              INTEGER PRIMARY KEY,
     system_address  INTEGER NOT NULL REFERENCES systems(system_address),
@@ -192,7 +194,7 @@ CREATE TABLE IF NOT EXISTS codex_entries (
     category        TEXT,
     region          TEXT,
     is_new_entry    INTEGER DEFAULT 0,
-    UNIQUE(entry_id, region)
+    UNIQUE(entry_id, system_address)
 );
 
 -- Exploration data sold (MultiSellExplorationData / SAAScanComplete sale).

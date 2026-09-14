@@ -508,7 +508,7 @@ def handle_codex_entry(event: dict, conn: sqlite3.Connection) -> None:
             (system_address, timestamp, entry_id, name, name_localised,
              sub_category, category, region, is_new_entry)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(entry_id, region) DO NOTHING
+        ON CONFLICT(entry_id, system_address) DO NOTHING
     """, (
         sa,
         event.get("timestamp"),

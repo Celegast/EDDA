@@ -98,6 +98,46 @@ def open_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
     except Exception:
         pass
 
+    # codex_entries used to be UNIQUE(entry_id, region), which collapsed every
+    # NSP/codex discovery of a given type within a region down to a single row
+    # — so e.g. a Notable Stellar Phenomenon found in five different systems in
+    # the same region only ever showed as "found once". Rebuild onto
+    # UNIQUE(entry_id, system_address) so each system is tallied separately.
+    # SQLite can't ALTER a UNIQUE constraint in place, so this is a one-time
+    # table rebuild, guarded by inspecting the stored table definition.
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='codex_entries'"
+        ).fetchone()
+        if row and row[0] and "UNIQUE(entry_id, region)" in row[0]:
+            conn.execute("ALTER TABLE codex_entries RENAME TO codex_entries_old")
+            conn.execute("""
+                CREATE TABLE codex_entries (
+                    id              INTEGER PRIMARY KEY,
+                    system_address  INTEGER NOT NULL REFERENCES systems(system_address),
+                    timestamp       TEXT    NOT NULL,
+                    entry_id        INTEGER NOT NULL,
+                    name            TEXT,
+                    name_localised  TEXT,
+                    sub_category    TEXT,
+                    category        TEXT,
+                    region          TEXT,
+                    is_new_entry    INTEGER DEFAULT 0,
+                    UNIQUE(entry_id, system_address)
+                )
+            """)
+            conn.execute("""
+                INSERT OR IGNORE INTO codex_entries
+                    (id, system_address, timestamp, entry_id, name, name_localised,
+                     sub_category, category, region, is_new_entry)
+                SELECT id, system_address, timestamp, entry_id, name, name_localised,
+                       sub_category, category, region, is_new_entry
+                FROM codex_entries_old
+            """)
+            conn.execute("DROP TABLE codex_entries_old")
+    except Exception:
+        pass
+
     conn.commit()
     return conn
 
