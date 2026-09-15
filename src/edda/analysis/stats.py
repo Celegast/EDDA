@@ -334,7 +334,12 @@ def sector_valuable_data(conn: sqlite3.Connection) -> pd.DataFrame:
     """
     df = pd.read_sql_query(sys_sql, conn)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["sector", "system_count",
+                                     "grid_cx", "grid_cy", "grid_cz",
+                                     "elw_count", "ww_count", "ammonia_count",
+                                     "terra_count", "bio_count",
+                                     "elw_rate", "ww_rate", "ammonia_rate",
+                                     "terra_rate", "bio_rate"])
 
     df["sector"] = df["name"].apply(extract_sector)
 
