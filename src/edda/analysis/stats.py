@@ -402,7 +402,8 @@ def body_rate_vs_z(conn: sqlite3.Connection,
     """
     df = pd.read_sql_query(sys_sql, conn)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["y_bin_centre", "systems", "elw", "ww", "terra", "bio",
+                                     "elw_rate", "ww_rate", "terra_rate", "bio_rate"])
 
     df["y_bin"] = (np.floor(df["y"] / bin_size) * bin_size + bin_size / 2)
 
@@ -452,7 +453,8 @@ def body_rate_vs_star_class(conn: sqlite3.Connection) -> pd.DataFrame:
     """
     df = pd.read_sql_query(sys_sql, conn)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["star_class", "systems", "elw", "ww", "terra", "bio",
+                                     "elw_rate", "ww_rate", "terra_rate", "bio_rate"])
 
     grp = df.groupby("star_class").agg(
         systems=("star_class", "count"),
@@ -1047,9 +1049,10 @@ def boxel_he_vs_value(
           AND b.subtype IS NOT NULL
           AND b.mass_em IS NOT NULL
     """
+    _BOXEL_HE_COLS = ["boxel", "system_count", "avg_system_value", "he_mean", "he_systems"]
     df_p = pd.read_sql_query(planet_sql, conn)
     if df_p.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_BOXEL_HE_COLS)
 
     df_p["est_value"] = df_p.apply(
         lambda r: body_scan_value(
@@ -1078,7 +1081,7 @@ def boxel_he_vs_value(
     """
     df_he = pd.read_sql_query(he_sql, conn)
     if df_he.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_BOXEL_HE_COLS)
 
     df_he["boxel"] = df_he["system_name"].apply(lambda n: _BOXEL_RE.sub("", n))
     he_grp = (
@@ -1116,8 +1119,10 @@ def nearby_helium_boxels(
 
     Returns up to 10 nearest qualifying boxels sorted by distance.
     """
+    _COLS = ["boxel", "gg_count", "he_min", "he_max", "he_mean", "dist",
+             "nearest_system", "nearest_system_address"]
     if cur_pos is None:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
     sql = """
         SELECT s.system_address, s.name AS system_name, s.x, s.y, s.z,
                b.atmosphere_he_pct,
@@ -1129,7 +1134,7 @@ def nearby_helium_boxels(
     """
     df = pd.read_sql_query(sql, conn)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
 
     # Use actual He% if available; fall back to 35.0 proxy for HRGG bodies
     # (HRGG classification implies He% is above the threshold)
@@ -1142,7 +1147,7 @@ def nearby_helium_boxels(
 
     df = df[df["he_pct"].notna()].copy()
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
 
     df["boxel"] = df["system_name"].apply(lambda n: _BOXEL_RE.sub("", n))
     cx, cy, cz = cur_pos["x"], cur_pos["y"], cur_pos["z"]
@@ -1192,8 +1197,9 @@ def nearby_tectonicas_boxels(
 
     Returns columns: boxel, he_mean, gg_count, dist.
     """
+    _COLS = ["boxel", "gg_count", "he_mean", "dist", "nearest_system", "nearest_system_address"]
     if cur_pos is None:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
     sql = """
         SELECT s.system_address, s.name AS system_name, s.x, s.y, s.z,
                b.atmosphere_he_pct, b.subtype
@@ -1204,7 +1210,7 @@ def nearby_tectonicas_boxels(
     """
     df = pd.read_sql_query(sql, conn)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
 
     df["he_pct"] = df["atmosphere_he_pct"].where(
         df["atmosphere_he_pct"].notna(),
@@ -1214,7 +1220,7 @@ def nearby_tectonicas_boxels(
     )
     df = df[df["he_pct"].notna()].copy()
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
 
     df["boxel"] = df["system_name"].apply(lambda n: _BOXEL_RE.sub("", n))
     cx, cy, cz = cur_pos["x"], cur_pos["y"], cur_pos["z"]
@@ -1260,8 +1266,9 @@ def nearby_high_value_boxels(
 
     Returns columns: boxel, he_mean, gg_count, dist.
     """
+    _COLS = ["boxel", "gg_count", "he_mean", "dist", "nearest_system", "nearest_system_address"]
     if cur_pos is None:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
     sql = """
         SELECT s.system_address, s.name AS system_name, s.x, s.y, s.z,
                b.atmosphere_he_pct, b.subtype
@@ -1272,7 +1279,7 @@ def nearby_high_value_boxels(
     """
     df = pd.read_sql_query(sql, conn)
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
 
     df["he_pct"] = df["atmosphere_he_pct"].where(
         df["atmosphere_he_pct"].notna(),
@@ -1282,7 +1289,7 @@ def nearby_high_value_boxels(
     )
     df = df[df["he_pct"].notna()].copy()
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_COLS)
 
     df["boxel"] = df["system_name"].apply(lambda n: _BOXEL_RE.sub("", n))
     cx, cy, cz = cur_pos["x"], cur_pos["y"], cur_pos["z"]
