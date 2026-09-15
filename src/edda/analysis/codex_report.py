@@ -27,6 +27,7 @@ import collections
 import csv
 import html
 import io
+import json
 import math
 import sqlite3
 import urllib.error
@@ -161,6 +162,14 @@ def load_canonn():
     return star_map, mat_map
 
 
+def _in_odyssey_window(date: str) -> bool:
+    """True if `date` (DateDiscovered, YYYY-MM-DD) falls in the Odyssey era, OR
+    the date is missing/unparseable — a handful of genuine entries have no
+    DateDiscovered recorded, and a missing date shouldn't disqualify an
+    otherwise-valid exobiology entry from being counted."""
+    return len(date) < 7 or date[:7] >= ODYSSEY_LAUNCH_MONTH
+
+
 def load_found(commander_names: set[str] = frozenset()):
     """(species,colour) -> regions where Found=1; region list; genus per species;
     sp_regions[species] -> regions where the species has ANY confirmed variant;
@@ -168,7 +177,11 @@ def load_found(commander_names: set[str] = frozenset()):
     my_firsts[region][species] -> colours YOU (commander_names) discovered there,
     per the CodexEntries 'DiscoveredBy' column — an actual regional first you logged;
     my_first_list -> the same, as a flat list of (region, species, colour, system, date)
-    for a summary table, most recent first."""
+    for a summary table, most recent first;
+    discoverer_counts -> every commander's regional-first tally, Odyssey-era
+    exobiology entries only — the same rows my_firsts draws from, for anyone,
+    not just commander_names, so the Statistics leaderboard can never drift
+    out of sync with 'Your regional firsts' above it."""
     found: dict[tuple, set] = collections.defaultdict(set)
     regions: set[str] = set()
     genus: dict[str, str] = {}
@@ -176,6 +189,7 @@ def load_found(commander_names: set[str] = frozenset()):
     sp_here: dict[str, set] = collections.defaultdict(set)
     my_firsts: dict[str, dict] = collections.defaultdict(lambda: collections.defaultdict(set))
     my_first_list: list[tuple] = []
+    discoverer_counts: collections.Counter = collections.Counter()
     for r in csv.DictReader(CE_TSV.open(encoding="utf-8"), delimiter="\t"):
         if r["Category"] != "Bio":
             continue
@@ -189,12 +203,15 @@ def load_found(commander_names: set[str] = frozenset()):
             found[(sp, col)].add(reg)
             sp_regions[sp].add(reg)
             sp_here[reg].add(sp)
-            discoverer = (r.get("DiscoveredBy") or "").strip().upper()
-            if discoverer and discoverer in commander_names:
-                my_firsts[reg][sp].add(col)
-                my_first_list.append((reg, sp, col, r.get("System", ""), r.get("DateDiscovered", "")))
+            discoverer = (r.get("DiscoveredBy") or "").strip()
+            date = (r.get("DateDiscovered") or "").strip()
+            if discoverer and _in_odyssey_window(date):
+                discoverer_counts[discoverer] += 1
+                if discoverer.upper() in commander_names:
+                    my_firsts[reg][sp].add(col)
+                    my_first_list.append((reg, sp, col, r.get("System", ""), date))
     my_first_list.sort(key=lambda x: x[4], reverse=True)
-    return found, sorted(regions), genus, sp_regions, sp_here, my_firsts, my_first_list
+    return found, sorted(regions), genus, sp_regions, sp_here, my_firsts, my_first_list, discoverer_counts
 
 
 def load_gaps():
@@ -233,6 +250,65 @@ def load_reconciliation_total():
             except ValueError:
                 return None
     return None
+
+
+ODYSSEY_LAUNCH_MONTH = "3307-05"   # in-universe YYYY-MM Odyssey went live
+
+
+def load_monthly_series():
+    """Regional-first Bio codex entries per month since Odyssey's launch, plus
+    a 3-month trailing average. None if the source has no post-launch dates."""
+    counts: collections.Counter = collections.Counter()
+    for r in csv.DictReader(CE_TSV.open(encoding="utf-8"), delimiter="\t"):
+        if r["Category"] != "Bio" or r["Found"] != "1":
+            continue
+        d = (r.get("DateDiscovered") or "").strip()
+        if len(d) >= 7 and d[:7] >= ODYSSEY_LAUNCH_MONTH:
+            counts[d[:7]] += 1
+    if not counts:
+        return None
+
+    months = sorted(counts)
+    sy, sm = (int(x) for x in months[0].split("-"))
+    ey, em = (int(x) for x in months[-1].split("-"))
+    series: list[list] = []
+    y, m = sy, sm
+    while (y, m) <= (ey, em):
+        key = f"{y:04d}-{m:02d}"
+        series.append([key, counts.get(key, 0)])
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+
+    # Centered 7-month average, not trailing: a trailing window lags behind
+    # sharp moves (e.g. the launch spike), which reads as jagged rather than a
+    # smooth trend. Centering removes that lag; edges shrink to what's available.
+    trend = []
+    for i in range(len(series)):
+        lo, hi = max(0, i - 3), min(len(series), i + 4)
+        window = series[lo:hi]
+        trend.append(round(sum(w[1] for w in window) / len(window), 1))
+
+    peak_month, peak_val = max(counts.items(), key=lambda kv: kv[1])
+    return {
+        "series": series, "trend": trend, "total": sum(counts.values()),
+        "peak_month": peak_month, "peak_val": peak_val,
+        "start": series[0][0], "end": series[-1][0],
+    }
+
+
+def build_commander_leaderboard(discoverer_counts: collections.Counter):
+    """Turn load_found()'s discoverer_counts into the leaderboard shape. Reuses
+    the exact same rows 'Your regional firsts' draws from — same species-validity
+    and Odyssey-window rules — so the two can never disagree."""
+    if not discoverer_counts:
+        return None
+    ranked = discoverer_counts.most_common()
+    return {
+        "leaderboard": [[i, name, n] for i, (name, n) in enumerate(ranked, 1)],
+        "total_cmdrs": len(ranked),
+        "total_firsts": sum(discoverer_counts.values()),
+    }
 
 
 _SUBTYPE_STAR = {}
@@ -342,6 +418,74 @@ summary.h2toggle{color:#dbe2f0;font-size:1.5em;font-weight:700;margin-top:2.2em;
 .hint{color:#9aa3b8;margin:.4em 0;max-width:90ch}
 .legend span{margin-right:16px}
 .warn{background:#2a1a15;border-left:3px solid #c0603a;padding:10px 14px;border-radius:4px;max-width:88ch;margin:1em 0}
+
+/* ---------- statistics section ---------- */
+.st-wrap{position:relative;margin-top:.5em}
+.st-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#232838;border:1px solid #232838;border-radius:8px;overflow:hidden;margin:16px 0 20px}
+.st-kpi{background:#11141f;padding:16px 18px}
+.st-kpi-label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#6a7488;margin-bottom:8px}
+.st-kpi-value{font-family:'Orbitron',sans-serif;font-weight:700;font-size:24px;color:#e6ebf5;font-variant-numeric:tabular-nums}
+.st-kpi-value.accent{color:#d97016}
+.st-kpi-sub{margin-top:5px;font-size:11.5px;color:#8892a8}
+.st-panel{background:#11141f;border:1px solid #1e2333;border-radius:8px;padding:18px 20px 12px;margin:14px 0}
+.st-panel-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px 16px;margin-bottom:4px}
+.st-panel-title{font-size:14px;font-weight:600;color:#dbe2f0}
+.st-panel-note{font-size:11px;color:#6a7488}
+.st-legend{display:flex;gap:18px;margin:2px 0 12px}
+.st-legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:#8892a8}
+.st-legend-key{width:14px;height:2px;flex:none}
+.st-legend-key.raw{background:#d97016}
+.st-legend-key.trend{background-image:linear-gradient(90deg,#e6ebf5 0 2px,transparent 2px 8px);background-size:8px 2px;background-repeat:repeat-x;height:2px}
+.st-chart-scroll{overflow-x:auto}
+.st-chart-svg{display:block;width:100%;height:auto;min-width:680px}
+.st-gridline{stroke:#1c2233;stroke-width:1;shape-rendering:crispEdges}
+.st-axis-text{font-size:10.5px;fill:#6a7488}
+.st-baseline{stroke:#232838;stroke-width:1}
+.st-area-fill{fill:rgba(217,112,22,.16)}
+.st-line-path{fill:none;stroke:#d97016;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.st-trend-path{fill:none;stroke:#e6ebf5;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;stroke-dasharray:1 6;opacity:.85}
+.st-peak-dot{fill:#ffb35c;stroke:#11141f;stroke-width:2}
+.st-peak-label-value{font-family:'Orbitron',sans-serif;font-weight:700;font-size:14px;fill:#ffb35c}
+.st-peak-label-sub{font-size:10px;fill:#8892a8}
+.st-peak-leader{stroke:#565f78;stroke-width:1;stroke-dasharray:2 3}
+.st-hover-line{stroke:#565f78;stroke-width:1;opacity:0;pointer-events:none}
+.st-hover-dot{fill:#ffb35c;stroke:#11141f;stroke-width:2;opacity:0;pointer-events:none}
+.st-hit-layer{fill:transparent;cursor:crosshair}
+.st-tooltip{position:absolute;pointer-events:none;background:#171b28;border:1px solid #232838;border-radius:6px;padding:8px 11px;font-size:12px;line-height:1.5;opacity:0;transform:translate(-50%,calc(-100% - 12px));transition:opacity .08s ease;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.st-tooltip .st-t-date{color:#8892a8;font-size:10.5px}
+.st-tooltip .st-t-val{font-family:'Orbitron',sans-serif;font-weight:700;color:#ffb35c;font-size:14px;font-variant-numeric:tabular-nums}
+.st-tooltip .st-t-trend{color:#8892a8;font-size:10.5px;margin-top:2px;font-variant-numeric:tabular-nums}
+.st-table-toggle{margin-top:20px;background:none;border:1px solid #232838;color:#8892a8;font-size:11.5px;letter-spacing:.03em;padding:7px 14px;border-radius:6px;cursor:pointer}
+.st-table-toggle:hover{color:#dbe2f0;border-color:#565f78}
+.st-table-toggle:focus-visible{outline:2px solid #d97016;outline-offset:2px}
+.st-table-wrap{margin-top:12px;overflow-x:auto;display:none}
+.st-table-wrap.open{display:block}
+table.st-data{border-collapse:collapse;width:100%;font-size:12.5px}
+table.st-data th,table.st-data td{text-align:left;padding:6px 12px;border-bottom:1px solid #1c2130;white-space:nowrap}
+table.st-data th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#6a7488;font-weight:500}
+table.st-data td.num{font-variant-numeric:tabular-nums;color:#c8cdda}
+table.st-data td.month{color:#8892a8}
+table.st-data td.cmdr{color:#c8cdda}
+table.st-data tr.you-row td{background:rgba(217,112,22,.30)}
+table.st-data tr.you-row td.cmdr{color:#ffb35c;font-weight:600}
+.st-lb-note{font-size:12.5px;line-height:1.6;color:#8892a8;max-width:68ch;margin:4px 0 16px}
+.st-lb-top{display:flex;flex-direction:column;gap:2px;margin-bottom:16px}
+.st-lb-row{display:grid;grid-template-columns:40px 1fr auto;align-items:center;gap:12px;padding:8px 11px;border-radius:6px;background:#171b28}
+.st-lb-rank{font-family:'Orbitron',sans-serif;font-weight:700;font-size:13px;color:#6a7488;text-align:center}
+.st-lb-row.medal-1 .st-lb-rank{color:#ffd35c}
+.st-lb-row.medal-2 .st-lb-rank{color:#d7dce6}
+.st-lb-row.medal-3 .st-lb-rank{color:#e0a566}
+.st-lb-name{font-size:12.5px;color:#dbe2f0;letter-spacing:.01em;overflow:hidden;text-overflow:ellipsis}
+.st-lb-count{font-family:'Orbitron',sans-serif;font-weight:700;font-size:13px;color:#8892a8;font-variant-numeric:tabular-nums}
+.st-lb-row.medal-1 .st-lb-count,.st-lb-row.medal-2 .st-lb-count,.st-lb-row.medal-3 .st-lb-count{color:#e6ebf5}
+.st-lb-divider{display:flex;align-items:center;gap:10px;padding:3px 11px;font-size:10.5px;color:#6a7488}
+.st-lb-divider::before,.st-lb-divider::after{content:"";flex:1;height:1px;background:#232838}
+.st-lb-row.you{background:rgba(217,112,22,.30);border:1px solid #d97016}
+.st-lb-row.you .st-lb-rank,.st-lb-row.you .st-lb-count{color:#ffb35c}
+.st-lb-row.you .st-lb-name{color:#e6ebf5;font-weight:600}
+.st-lb-you-tag{font-size:9px;letter-spacing:.08em;color:#0c0e16;background:#d97016;padding:1px 5px;border-radius:3px;margin-left:6px}
+.st-lb-jump{background:none;border:none;color:#ffb35c;font-size:11px;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px}
+.st-lb-jump:hover{color:#dbe2f0}
 """
 
 
@@ -377,9 +521,371 @@ def favicon_data_uri(size=32):
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
+_STATS_FONT_LINK = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&display=swap" '
+    'rel="stylesheet">'
+)
+
+
+def _stats_section_html(monthly: dict | None, leaderboard: dict | None,
+                        commander_names_: set[str]) -> str:
+    """Community-wide monthly activity (log-scale chart + trend line) and the
+    all-time commander leaderboard, both from CodexEntries.tsv. Interactive
+    (hover tooltip, collapsible tables) — a client-side JS chart, unlike the
+    rest of this server-rendered report."""
+    if not monthly and not leaderboard:
+        return ""
+
+    P = ["<h2>Statistics</h2>",
+         "<p class='sub'>Community-wide activity pulled from the same CodexEntries.tsv this report is "
+         "built from — how many exobiology regional firsts get logged galaxy-wide each month, and who's "
+         "logged the most all-time.</p>",
+         "<div class='st-wrap'>"]
+
+    if monthly:
+        n = len(monthly["series"])
+        P.append("<div class='st-kpis'>"
+                 "<div class='st-kpi'><div class='st-kpi-label'>Regional firsts logged</div>"
+                 "<div class='st-kpi-value' id='st-kpi-total'>—</div>"
+                 "<div class='st-kpi-sub'>since Odyssey launch</div></div>"
+                 "<div class='st-kpi'><div class='st-kpi-label'>Peak month</div>"
+                 "<div class='st-kpi-value accent' id='st-kpi-peak'>—</div>"
+                 "<div class='st-kpi-sub' id='st-kpi-peak-sub'></div></div>"
+                 "<div class='st-kpi'><div class='st-kpi-label'>Months tracked</div>"
+                 f"<div class='st-kpi-value'>{n}</div>"
+                 "<div class='st-kpi-sub' id='st-kpi-months-sub'></div></div>"
+                 "</div>")
+
+        P.append(
+            "<div class='st-panel'><div class='st-panel-head'>"
+            "<div class='st-panel-title'>Regional firsts per month</div>"
+            "<div class='st-panel-note'>hover to inspect &middot; log scale</div></div>"
+            "<div class='st-legend'>"
+            "<div class='st-legend-item'><span class='st-legend-key raw'></span>Monthly count</div>"
+            "<div class='st-legend-item'><span class='st-legend-key trend'></span>Trend</div>"
+            "</div>"
+            "<div class='st-chart-scroll'><svg class='st-chart-svg' id='st-chart' "
+            "viewBox='0 0 1180 460' preserveAspectRatio='xMinYMin meet'></svg></div>"
+            "<button class='st-table-toggle' id='st-table-btn' type='button' "
+            "aria-expanded='false' aria-controls='st-table-wrap'>View as table &darr;</button>"
+            "<div class='st-table-wrap' id='st-table-wrap'>"
+            "<table class='st-data'><thead><tr><th>Month</th><th>Regional firsts</th></tr></thead>"
+            "<tbody id='st-table-body'></tbody></table></div>"
+            "</div>")
+
+    if leaderboard:
+        P.append(
+            "<div class='st-panel'><div class='st-panel-head'>"
+            "<div class='st-panel-title'>Commander leaderboard</div>"
+            "<div class='st-panel-note' id='st-lb-panel-note'>—</div></div>"
+            "<p class='st-lb-note'>Every commander CodexEntries.tsv credits as the discoverer of an "
+            "exobiology regional first, ranked by count — same Odyssey-era window as the chart above.</p>"
+            "<div class='st-lb-top' id='st-lb-top'></div>"
+            "<div style='display:flex;align-items:center;gap:16px;flex-wrap:wrap'>"
+            "<button class='st-table-toggle' id='st-lb-btn' type='button' "
+            "aria-expanded='false' aria-controls='st-lb-wrap'>View full leaderboard &darr;</button>"
+            "<button class='st-lb-jump' id='st-lb-jump' type='button' style='display:none'>"
+            "Jump to my rank &rarr;</button>"
+            "</div>"
+            "<div class='st-table-wrap' id='st-lb-wrap'>"
+            "<table class='st-data'><thead><tr><th>Rank</th><th>Commander</th>"
+            "<th>Regional firsts</th></tr></thead><tbody id='st-lb-body'></tbody></table></div>"
+            "</div>")
+
+    P.append("<div class='st-tooltip' id='st-tooltip'><div class='st-t-date' id='st-tt-date'></div>"
+             "<div class='st-t-val' id='st-tt-val'></div><div class='st-t-trend' id='st-tt-trend'></div></div>")
+    P.append("</div>")
+
+    P.append("<script>" + _stats_chart_js(monthly) + "</script>")
+    P.append("<script>" + _stats_leaderboard_js(leaderboard, commander_names_) + "</script>")
+    return "".join(P)
+
+
+def _stats_chart_js(monthly: dict | None) -> str:
+    if not monthly:
+        return ""
+    return """
+(function () {
+  var DATA = """ + json.dumps(monthly) + """;
+  var series = DATA.series;
+
+  function monthLabel(key) {
+    var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var parts = key.split('-');
+    return MONTHS[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+  }
+
+  document.getElementById('st-kpi-total').textContent = DATA.total.toLocaleString('en-US');
+  document.getElementById('st-kpi-peak').textContent = DATA.peak_val.toLocaleString('en-US');
+  document.getElementById('st-kpi-peak-sub').textContent = monthLabel(DATA.peak_month) + ' — Odyssey launch';
+  document.getElementById('st-kpi-months-sub').textContent = monthLabel(DATA.start) + ' → ' + monthLabel(DATA.end);
+
+  var tbody = document.getElementById('st-table-body');
+  var rows = series.slice().reverse();
+  var frag = document.createDocumentFragment();
+  rows.forEach(function (d) {
+    var tr = document.createElement('tr');
+    var tdMonth = document.createElement('td');
+    tdMonth.className = 'month';
+    tdMonth.textContent = monthLabel(d[0]);
+    var tdVal = document.createElement('td');
+    tdVal.className = 'num';
+    tdVal.textContent = d[1].toLocaleString('en-US');
+    tr.appendChild(tdMonth);
+    tr.appendChild(tdVal);
+    frag.appendChild(tr);
+  });
+  tbody.appendChild(frag);
+
+  var tableBtn = document.getElementById('st-table-btn');
+  var tableWrap = document.getElementById('st-table-wrap');
+  tableBtn.addEventListener('click', function () {
+    var open = tableWrap.classList.toggle('open');
+    tableBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    tableBtn.textContent = open ? 'Hide table ↑' : 'View as table ↓';
+  });
+
+  var svg = document.getElementById('st-chart');
+  var W = 1180, H = 460;
+  var M = { top: 24, right: 20, bottom: 34, left: 54 };
+  var plotW = W - M.left - M.right;
+  var plotH = H - M.top - M.bottom;
+  var n = series.length;
+  var yLogMin = 10, yLogMax = 5000;
+  var lDomMin = Math.log10(yLogMin), lDomMax = Math.log10(yLogMax);
+
+  function x(i) { return M.left + (i / (n - 1)) * plotW; }
+  function y(v) {
+    var lv = Math.log10(Math.max(v, yLogMin));
+    return M.top + plotH - ((lv - lDomMin) / (lDomMax - lDomMin)) * plotH;
+  }
+
+  var svgNS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    var e = document.createElementNS(svgNS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  var yTicks = [10, 30, 100, 300, 1000, 3000];
+  yTicks.forEach(function (v) {
+    var gy = y(v);
+    svg.appendChild(el('line', { x1: M.left, x2: W - M.right, y1: gy, y2: gy, class: 'st-gridline' }));
+    var t = el('text', { x: M.left - 10, y: gy + 4, 'text-anchor': 'end', class: 'st-axis-text' });
+    t.textContent = v >= 1000 ? (v / 1000) + 'k' : v;
+    svg.appendChild(t);
+  });
+  svg.appendChild(el('line', { x1: M.left, x2: W - M.right, y1: M.top + plotH, y2: M.top + plotH, class: 'st-baseline' }));
+
+  for (var i = 0; i < n; i++) {
+    var mm = series[i][0].split('-')[1];
+    var yy = series[i][0].split('-')[0];
+    if (mm === '01' || i === 0) {
+      var gx = x(i);
+      var lbl = el('text', { x: gx, y: M.top + plotH + 20, 'text-anchor': 'middle', class: 'st-axis-text' });
+      lbl.textContent = yy;
+      svg.appendChild(lbl);
+    }
+  }
+
+  var areaD = 'M ' + x(0) + ' ' + y(series[0][1]);
+  for (i = 1; i < n; i++) areaD += ' L ' + x(i) + ' ' + y(series[i][1]);
+  areaD += ' L ' + x(n - 1) + ' ' + (M.top + plotH) + ' L ' + x(0) + ' ' + (M.top + plotH) + ' Z';
+  svg.appendChild(el('path', { d: areaD, class: 'st-area-fill' }));
+
+  var lineD = 'M ' + x(0) + ' ' + y(series[0][1]);
+  for (i = 1; i < n; i++) lineD += ' L ' + x(i) + ' ' + y(series[i][1]);
+  svg.appendChild(el('path', { d: lineD, class: 'st-line-path' }));
+
+  var trend = DATA.trend;
+  if (trend && trend.length === n) {
+    var trendD = 'M ' + x(0) + ' ' + y(trend[0]);
+    for (i = 1; i < n; i++) trendD += ' L ' + x(i) + ' ' + y(trend[i]);
+    svg.appendChild(el('path', { d: trendD, class: 'st-trend-path' }));
+  }
+
+  var peakIdx = series.findIndex(function (d) { return d[0] === DATA.peak_month; });
+  var px = x(peakIdx), py = y(series[peakIdx][1]);
+  var peakAnchor = peakIdx < n * 0.15 ? 'start' : peakIdx > n * 0.85 ? 'end' : 'middle';
+  var peakLabelX = peakAnchor === 'start' ? px + 8 : peakAnchor === 'end' ? px - 8 : px;
+  svg.appendChild(el('line', { x1: px, y1: py - 10, x2: px, y2: M.top + 34, class: 'st-peak-leader' }));
+  var peakVal = el('text', { x: peakLabelX, y: M.top + 14, 'text-anchor': peakAnchor, class: 'st-peak-label-value' });
+  peakVal.textContent = series[peakIdx][1].toLocaleString('en-US');
+  svg.appendChild(peakVal);
+  var peakSub = el('text', { x: peakLabelX, y: M.top + 28, 'text-anchor': peakAnchor, class: 'st-peak-label-sub' });
+  peakSub.textContent = monthLabel(DATA.peak_month) + ' — Odyssey launch';
+  svg.appendChild(peakSub);
+  svg.appendChild(el('circle', { cx: px, cy: py, r: 4, class: 'st-peak-dot' }));
+
+  var hoverLine = el('line', { x1: 0, x2: 0, y1: M.top, y2: M.top + plotH, class: 'st-hover-line' });
+  var hoverDot = el('circle', { r: 4.5, class: 'st-hover-dot' });
+  svg.appendChild(hoverLine);
+  svg.appendChild(hoverDot);
+
+  var hit = el('rect', { x: M.left, y: M.top, width: plotW, height: plotH, class: 'st-hit-layer' });
+  svg.appendChild(hit);
+
+  var tooltip = document.getElementById('st-tooltip');
+  var ttDate = document.getElementById('st-tt-date');
+  var ttVal = document.getElementById('st-tt-val');
+  var ttTrend = document.getElementById('st-tt-trend');
+
+  function pointerToIndex(clientX) {
+    var rect = svg.getBoundingClientRect();
+    var svgX = (clientX - rect.left) / rect.width * W;
+    var frac = (svgX - M.left) / plotW;
+    var idx = Math.round(frac * (n - 1));
+    return Math.max(0, Math.min(n - 1, idx));
+  }
+
+  function showAt(idx) {
+    var gx = x(idx), gy = y(series[idx][1]);
+    hoverLine.setAttribute('x1', gx);
+    hoverLine.setAttribute('x2', gx);
+    hoverLine.style.opacity = 1;
+    hoverDot.setAttribute('cx', gx);
+    hoverDot.setAttribute('cy', gy);
+    hoverDot.style.opacity = 1;
+
+    ttDate.textContent = monthLabel(series[idx][0]);
+    ttVal.textContent = series[idx][1].toLocaleString('en-US') + ' regional firsts';
+    ttTrend.textContent = trend ? 'trend: ' + Math.round(trend[idx]).toLocaleString('en-US') : '';
+
+    var wrapRect = document.querySelector('.st-wrap').getBoundingClientRect();
+    var svgRect = svg.getBoundingClientRect();
+    var left = (svgRect.left - wrapRect.left) + (gx / W) * svgRect.width;
+    var top = (svgRect.top - wrapRect.top) + (gy / H) * svgRect.height;
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
+    tooltip.style.opacity = 1;
+  }
+
+  function hide() {
+    hoverLine.style.opacity = 0;
+    hoverDot.style.opacity = 0;
+    tooltip.style.opacity = 0;
+  }
+
+  hit.addEventListener('pointermove', function (e) { showAt(pointerToIndex(e.clientX)); });
+  hit.addEventListener('pointerleave', hide);
+})();
+"""
+
+
+def _stats_leaderboard_js(leaderboard: dict | None, commander_names_: set[str]) -> str:
+    if not leaderboard:
+        return ""
+    lb = dict(leaderboard)
+    lb["me_names"] = sorted(
+        r[1] for r in leaderboard["leaderboard"] if r[1].strip().upper() in commander_names_
+    )
+    return """
+(function () {
+  var LB = """ + json.dumps(lb) + """;
+  var rows = LB.leaderboard;
+  var meNames = LB.me_names || [];
+  var meRow = null;
+  rows.forEach(function (r) { if (meNames.indexOf(r[1]) !== -1 && (!meRow || r[0] < meRow[0])) meRow = r; });
+
+  document.getElementById('st-lb-panel-note').textContent =
+    LB.total_cmdrs.toLocaleString('en-US') + ' commanders · ' +
+    LB.total_firsts.toLocaleString('en-US') + ' firsts';
+
+  function medalClass(rank) {
+    return rank === 1 ? ' medal-1' : rank === 2 ? ' medal-2' : rank === 3 ? ' medal-3' : '';
+  }
+
+  function makeRow(rank, name, count, extraClass, tag) {
+    var div = document.createElement('div');
+    div.className = 'st-lb-row' + medalClass(rank) + (extraClass ? ' ' + extraClass : '');
+    var rankEl = document.createElement('div');
+    rankEl.className = 'st-lb-rank';
+    rankEl.textContent = '#' + rank;
+    var nameEl = document.createElement('div');
+    nameEl.className = 'st-lb-name';
+    nameEl.textContent = name;
+    if (tag) {
+      var tagEl = document.createElement('span');
+      tagEl.className = 'st-lb-you-tag';
+      tagEl.textContent = tag;
+      nameEl.appendChild(tagEl);
+    }
+    var countEl = document.createElement('div');
+    countEl.className = 'st-lb-count';
+    countEl.textContent = count.toLocaleString('en-US');
+    div.appendChild(rankEl);
+    div.appendChild(nameEl);
+    div.appendChild(countEl);
+    return div;
+  }
+
+  var lbTop = document.getElementById('st-lb-top');
+  rows.slice(0, 10).forEach(function (r) { lbTop.appendChild(makeRow(r[0], r[1], r[2])); });
+
+  if (meRow && meRow[0] > 10) {
+    var divider = document.createElement('div');
+    divider.className = 'st-lb-divider';
+    divider.textContent = (meRow[0] - 11) + ' more';
+    lbTop.appendChild(divider);
+    lbTop.appendChild(makeRow(meRow[0], meRow[1], meRow[2], 'you', 'YOU'));
+  }
+
+  var lbBody = document.getElementById('st-lb-body');
+  var frag = document.createDocumentFragment();
+  rows.forEach(function (r) {
+    var tr = document.createElement('tr');
+    var isMe = meNames.indexOf(r[1]) !== -1;
+    if (isMe) {
+      tr.className = 'you-row';
+      if (meRow && r[0] === meRow[0]) tr.id = 'st-lb-you-row';
+    }
+    var tdRank = document.createElement('td');
+    tdRank.className = 'num';
+    tdRank.textContent = '#' + r[0];
+    var tdName = document.createElement('td');
+    tdName.className = 'cmdr';
+    tdName.textContent = r[1] + (isMe ? '  (you)' : '');
+    var tdCount = document.createElement('td');
+    tdCount.className = 'num';
+    tdCount.textContent = r[2].toLocaleString('en-US');
+    tr.appendChild(tdRank);
+    tr.appendChild(tdName);
+    tr.appendChild(tdCount);
+    frag.appendChild(tr);
+  });
+  lbBody.appendChild(frag);
+
+  var lbBtn = document.getElementById('st-lb-btn');
+  var lbWrap = document.getElementById('st-lb-wrap');
+  lbBtn.addEventListener('click', function () {
+    var open = lbWrap.classList.toggle('open');
+    lbBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    lbBtn.textContent = open ? 'Hide full leaderboard ↑' : 'View full leaderboard ↓';
+  });
+
+  if (meRow) {
+    var lbJump = document.getElementById('st-lb-jump');
+    lbJump.style.display = '';
+    lbJump.addEventListener('click', function () {
+      if (!lbWrap.classList.contains('open')) {
+        lbWrap.classList.add('open');
+        lbBtn.setAttribute('aria-expanded', 'true');
+        lbBtn.textContent = 'Hide full leaderboard ↑';
+      }
+      var target = document.getElementById('st-lb-you-row');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }
+})();
+"""
+
+
 def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             region_stars, cover, prof, personal_region, personal_global,
-            my_firsts, my_first_list, reconcile_total, out_path: Path) -> None:
+            my_firsts, my_first_list, reconcile_total, cmdrs,
+            monthly, leaderboard, out_path: Path) -> None:
     NR = len(regions)
     COVER_OK = 250      # min systems visited to trust "this region has no such star"
     UNIVERSAL = 38      # confirmed in >= this many regions -> "occurs galaxy-wide"
@@ -430,7 +936,7 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                 if star not in EXOTIC and reg not in found.get((sp, col), ()) and spawns(reg, star):
                     rf_real += 1
 
-    P = [f"<style>{CSS}</style><h1>{pie_logo()}Odyssey Codex (report)</h1>"]
+    P = [f"<style>{CSS}</style><h1>{pie_logo()}Odyssey Codex Report</h1>"]
     P.append(
         f"<p class='sub'>A colour variant not yet logged in a region is a <b>regional first</b> there; "
         f"one never logged anywhere is a <b>galactic first</b>. Method: Canonn's variant list minus what "
@@ -713,8 +1219,13 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             P.append(f"<tr><td>{esc(sp)}</td><td class='sub'>{vs}</td></tr>")
         P.append("</table>")
 
-    out_path.write_text("<!doctype html><meta charset=utf-8><title>Odyssey Codex (report)</title>"
-                        f'<link rel="icon" href="{favicon_data_uri()}">' + "".join(P),
+    # ---- statistics (community-wide monthly activity + commander leaderboard)
+    stats_html = _stats_section_html(monthly, leaderboard, cmdrs)
+    P.append(stats_html)
+
+    font_link = _STATS_FONT_LINK if stats_html else ""
+    out_path.write_text("<!doctype html><meta charset=utf-8><title>Odyssey Codex Report</title>"
+                        f'<link rel="icon" href="{favicon_data_uri()}">{font_link}' + "".join(P),
                         encoding="utf-8")
     print(f"  wrote {out_path}")
     print(f"  realistic regional firsts: {rf_real:,}   (raw incl. absent species: {rf_raw - rf_exotic:,})")
@@ -725,10 +1236,13 @@ def build_codex_report(conn: sqlite3.Connection, out_path: Path) -> None:
     """Build and write the self-contained Odyssey Codex gap-analysis report."""
     star_map, mat_map = load_canonn()
     cmdrs = commander_names(conn)
-    found, regions, genus, sp_regions, sp_here, my_firsts, my_first_list = load_found(cmdrs)
+    found, regions, genus, sp_regions, sp_here, my_firsts, my_first_list, discoverer_counts = load_found(cmdrs)
     gaps = load_gaps()
     region_stars, cover, prof, personal_region, personal_global = db_region_data(conn)
     reconcile_total = load_reconciliation_total()
+    monthly = load_monthly_series()
+    leaderboard = build_commander_leaderboard(discoverer_counts)
     _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             region_stars, cover, prof, personal_region, personal_global,
-            my_firsts, my_first_list, reconcile_total, out_path)
+            my_firsts, my_first_list, reconcile_total, cmdrs,
+            monthly, leaderboard, out_path)
