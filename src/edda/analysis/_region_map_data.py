@@ -2097,3 +2097,16 @@ regionmap = [
     [(2048, 0)],
 ]
 
+# Region bitmap parameters from klightspeed/EliteDangerousRegionMap
+_REG_X0    = -49985.0       # game X at pixel column 0
+_REG_Z0    = -24105.0       # game Z at bitmap row 0  (row 0 = minimum Z)
+_REG_PX_SZ =  4096.0 / 83   # ly per pixel (≈ 49.35 ly)
+
+# Reference landmarks (ED galactic coordinates): (name, x, y, z, colour)
+_LANDMARKS = [
+    ("Sol",           0,           0,           0,           "yellow"),
+    ("Colonia",      -9530.5,     -910.28125,  19808.125,   "#ff9944"),
+    ("Sag A*",        25.21875,   -20.90625,   25899.96875, "#ff44aa"),
+    ("Beagle Point", -1111.5625,  -134.21875,  65269.75,    "#44ffcc"),
+]
+

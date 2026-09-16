@@ -29,6 +29,7 @@ import html
 import io
 import json
 import math
+import re
 import sqlite3
 import urllib.error
 import urllib.parse
@@ -342,6 +343,199 @@ def commander_names(conn: sqlite3.Connection) -> set[str]:
     return {r[0].strip().upper() for r in rows if r[0] and r[0].strip()}
 
 
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _rle_encode_row(row: list[int]) -> list[tuple[int, int, int]]:
+    """[(start_col, run_length, id), ...] for a flat list of ids."""
+    runs, start = [], 0
+    for i in range(1, len(row) + 1):
+        if i == len(row) or row[i] != row[start]:
+            runs.append((start, i - start, row[start]))
+            start = i
+    return runs
+
+
+def _landmarks_svg(ncols: int, nrows: int) -> str:
+    """Sol / Colonia / Sag A* / Beagle Point, plotted at their real galactic
+    position — same landmark list and same region-bitmap coordinate system
+    (_REG_X0/_REG_Z0/_REG_PX_SZ) the dashboard's own galaxy maps use — and
+    flipped to match _build_region_map_svg's own row-flip (rows only, so
+    The Void stays on the left and Tenebrae on the right)."""
+    from ._region_map_data import _LANDMARKS, _REG_X0, _REG_Z0, _REG_PX_SZ
+
+    STRIDE = 8
+    parts = ["<g class='region-landmarks'>"]
+    for name, lx, _ly, lz, colour in _LANDMARKS:
+        col = (lx - _REG_X0) / _REG_PX_SZ / STRIDE
+        row = nrows - (lz - _REG_Z0) / _REG_PX_SZ / STRIDE
+        if not (0 <= col <= ncols and 0 <= row <= nrows):
+            continue
+        parts.append(f"<g transform='translate({col:.1f} {row:.1f})'>"
+                     f"<circle r='2.3' fill='{colour}' fill-opacity='.9' stroke='#05060a' stroke-width='.5'/>"
+                     f"<text x='3.4' y='1' font-size='4.4' fill='{colour}'>{esc(name)}</text></g>")
+    parts.append("</g>")
+    return "".join(parts)
+
+
+def _boundary_runs(row_a: list[int], row_b: list[int], n: int) -> list[tuple[int, int]]:
+    """Contiguous [start, end) stretches where two adjacent rows/columns of
+    region ids differ (and at least one side is a named region) — the true
+    cell-boundary edges, not just "this cell's own edge"."""
+    runs, c = [], 0
+    while c < n:
+        if row_a[c] != row_b[c] and (row_a[c] or row_b[c]):
+            c0 = c
+            while c < n and row_a[c] != row_b[c] and (row_a[c] or row_b[c]):
+                c += 1
+            runs.append((c0, c))
+        else:
+            c += 1
+    return runs
+
+
+def _build_region_map_svg(reg_stats: dict[str, tuple[int, int]]) -> str:
+    """A clickable galaxy map: each region is filled at low intensity in its
+    own colour, brightening (plus a bright outline) on hover; a single thin
+    outline traces every region's true perimeter on top of that (not
+    stroked per-cell — that produced a hatched, flicker-prone look, since
+    fixed by tracing real boundary edges once instead). Each region shows
+    its viable regional-firsts count (amber for the higher-opportunity
+    third), plus Sol / Colonia / Sag A* / Beagle Point plotted at their real
+    position (see _landmarks_svg). Region names aren't drawn in-shape —
+    some are too long to fit small slivers legibly — they show in a label
+    below the map on hover instead (_region_map_js).
+    Flipped vertically (rows only, not mirrored left-right) from the raw
+    bitmap so Inner Orion Spur — where Sol sits — lands in the middle-lower
+    area near where the player starts, and (per the original orientation)
+    The Void stays on the left with Tenebrae on the right.
+    Clicking a region jumps to its `<details>` block (id="region-{slug}")."""
+    import colorsys
+    from ._region_map_data import regionmap as rle_rows, regions as region_names
+
+    STRIDE = 8
+    ncols = nrows = 2048 // STRIDE
+    counts = {r: reg_stats.get(r, (0, 0))[0] for r in region_names if r}
+    hi_tier = set(sorted(counts, key=lambda r: -counts[r])[:max(1, len(counts) // 3)])
+
+    # cells[rid] = [(start_col, row, run_length), ...], already rotated 180°;
+    # grid = the same data as a full 2D array, for boundary-edge tracing.
+    cells: dict[int, list[tuple[int, int, int]]] = collections.defaultdict(list)
+    grid: list[list[int]] = [[0] * ncols for _ in range(nrows)]
+    for r_out, orig_row in enumerate(rle_rows[::STRIDE]):
+        coarse = [0] * ncols
+        col = 0
+        for length, rid in orig_row:
+            c0, c1 = col // STRIDE, min((col + length - 1) // STRIDE, ncols - 1)
+            if c0 <= c1:
+                coarse[c0:c1 + 1] = [rid] * (c1 - c0 + 1)
+            col += length
+        rot_row = nrows - 1 - r_out
+        grid[rot_row] = coarse
+        for c0, length, rid in _rle_encode_row(coarse):
+            if rid > 0:
+                cells[rid].append((c0, rot_row, length))
+
+    h_paths = [f"M{c0} {r+1}H{c1}" for r in range(nrows - 1) for c0, c1 in _boundary_runs(grid[r], grid[r + 1], ncols)]
+    cols = list(zip(*grid))
+    v_paths = [f"M{c+1} {r0}V{r1}" for c in range(ncols - 1)
+               for r0, r1 in _boundary_runs(list(cols[c]), list(cols[c + 1]), nrows)]
+    border_layer = (f"<path class='region-borders' d='{' '.join(h_paths + v_paths)}' fill='none' "
+                    "stroke='#7c8aa8' stroke-width='.35' stroke-opacity='.55'/>")
+
+    shapes: list[str] = []
+    labels: list[str] = []
+    for rid in sorted(cells, key=lambda i: region_names[i] if i < len(region_names) and region_names[i] else ""):
+        name = region_names[rid] if rid < len(region_names) else None
+        if not name:
+            continue
+        runs = cells[rid]
+        area = sum(length for _, _, length in runs)
+        cx = sum((c0 + length / 2) * length for c0, _, length in runs) / area
+        cy = sum((row + 0.5) * length for _, row, length in runs) / area
+
+        hue = (rid * 137.508) % 360 / 360
+        br, bg, bb = colorsys.hls_to_rgb(hue, 0.28, 0.5)
+        fr, fg, fb = colorsys.hls_to_rgb(hue, 0.42, 0.6)
+        sr, sg, sb = colorsys.hls_to_rgb(hue, 0.62, 0.7)
+        base_fill = f"#{round(br*255):02x}{round(bg*255):02x}{round(bb*255):02x}"
+        hover_fill = f"#{round(fr*255):02x}{round(fg*255):02x}{round(fb*255):02x}"
+        hover_stroke = f"#{round(sr*255):02x}{round(sg*255):02x}{round(sb*255):02x}"
+
+        n = counts.get(name, 0)
+        rects = "".join(f"<rect x='{c0}' y='{row}' width='{length}' height='1'/>" for c0, row, length in runs)
+        count_fill = "#f0c24a" if name in hi_tier else "#dbe0ec"
+
+        # Widest run on the row nearest the centroid, and how many
+        # consecutive rows surround it — local room for the count digits,
+        # not the (possibly misleading, for a crescent) overall bounding box.
+        by_row: dict[int, list[tuple[int, int]]] = collections.defaultdict(list)
+        for c0, row, length in runs:
+            by_row[row].append((c0, length))
+        row_near = min(by_row, key=lambda r: abs(r - cy))
+        row_runs = by_row[row_near]
+        containing = [r for r in row_runs if r[0] <= cx <= r[0] + r[1]]
+        bc0, blen = containing[0] if containing else max(row_runs, key=lambda r: r[1])
+        local_w, local_cx = blen, bc0 + blen / 2
+        rows_sorted = sorted(by_row)
+        idx = rows_sorted.index(row_near)
+        top = bot = idx
+        while top > 0 and rows_sorted[top - 1] == rows_sorted[top] - 1:
+            top -= 1
+        while bot < len(rows_sorted) - 1 and rows_sorted[bot + 1] == rows_sorted[bot] + 1:
+            bot += 1
+        local_h = rows_sorted[bot] - rows_sorted[top] + 1
+        local_cy = (rows_sorted[top] + rows_sorted[bot]) / 2 + 0.5
+
+        label = ""
+        digits = len(f"{n:,}")
+        fs = max(1.6, min(7.0, local_h * 0.6, local_w * 0.85 / max(1, digits)))
+        if local_w >= 2.5 and local_h >= 2:
+            label = (f"<text x='{local_cx:.1f}' y='{local_cy + fs*0.35:.1f}' font-size='{fs:.2f}' "
+                     f"fill='{count_fill}'>{n:,}</text>")
+        shapes.append(f"<a class='region-shape' data-slug='{_slug(name)}' data-name='{esc(name)}' "
+                      f"data-n='{n:,}' style='--rc0:{base_fill};--rc1:{hover_fill};--sc:{hover_stroke}'>"
+                      f"<title>{esc(name)} — {n:,} viable regional first{'s' if n != 1 else ''}</title>"
+                      + rects + "</a>")
+        labels.append(label)
+
+    parts = [f"<svg class='region-map' viewBox='0 0 {ncols} {nrows}' "
+             "preserveAspectRatio='xMidYMid meet' shape-rendering='crispEdges'>"]
+    parts += shapes
+    parts.append(border_layer)
+    parts.append(_landmarks_svg(ncols, nrows))
+    parts.append("<g class='region-labels'>")
+    parts += labels
+    parts.append("</g></svg>")
+    return "".join(parts)
+
+
+def _region_map_js() -> str:
+    return """(function(){
+  var wrap = document.getElementById('region-map-wrap');
+  var label = document.getElementById('region-map-label');
+  if (!wrap || !label) return;
+  var placeholder = label.textContent;
+  document.querySelectorAll('.region-shape').forEach(function(a){
+    a.addEventListener('mouseenter', function(){
+      label.textContent = a.getAttribute('data-name') + '  —  ' + a.getAttribute('data-n') + ' viable';
+    });
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      var det = document.getElementById('region-' + a.getAttribute('data-slug'));
+      if (!det) return;
+      det.open = true;
+      det.scrollIntoView({behavior:'smooth', block:'start'});
+      det.classList.remove('region-flash');
+      void det.offsetWidth;
+      det.classList.add('region-flash');
+    });
+  });
+  wrap.addEventListener('mouseleave', function(){ label.textContent = placeholder; });
+}())"""
+
+
 def _guess_material_colour(species_materials: dict, body_materials: list) -> str | None:
     """Best-effort colour for a material-related species on a body, from the
     body's full material list `[(name_lower, percent), ...]` sorted richest
@@ -491,6 +685,21 @@ table.mx tr.mxtot td{border-bottom:2px solid #232838;color:#6f7890;font-variant-
 .gfx{background:#241d16;color:#7c6a42}
 .na{background:#0e1017}
 .region{background:#11141f;border:1px solid #1e2333;border-radius:6px;padding:12px 16px;margin:12px 0}
+#region-map-wrap{float:left;width:100%;max-width:720px;margin:6px 26px 16px 0}
+.region-map{display:block;width:100%;height:auto;background:#05060a;border-radius:6px}
+.region-map-label{margin-top:8px;text-align:center;font-size:1.05em;color:#dbe0ec;min-height:1.4em}
+.region-map-clear{clear:both}
+.region-borders{pointer-events:none}
+.region-shape{cursor:pointer;fill:var(--rc0);fill-opacity:.5;stroke:none;transition:fill .1s}
+.region-shape:hover{fill:var(--rc1);fill-opacity:.72;stroke:var(--sc);stroke-width:.7}
+.region-labels{pointer-events:none}
+.region-labels text{font-family:'Segoe UI',system-ui,sans-serif;text-anchor:middle;
+  paint-order:stroke;stroke:#0a0c12cc;stroke-width:.6px;stroke-linejoin:round;font-weight:700}
+.region-landmarks{pointer-events:none}
+.region-landmarks text{font-family:'Segoe UI',system-ui,sans-serif;font-style:italic;
+  paint-order:stroke;stroke:#0a0c12cc;stroke-width:.5px;stroke-linejoin:round}
+@keyframes region-flash{0%{box-shadow:0 0 0 3px #f0c24a}100%{box-shadow:0 0 0 3px #f0c24a00}}
+.region-flash{animation:region-flash 1.6s ease-out}
 details>summary{cursor:pointer;color:#cdd6ea;font-size:1.02rem;padding:4px 0}
 summary.h2toggle{color:#dbe2f0;font-size:1.5em;font-weight:700;margin-top:2.2em;padding-bottom:.3em;border-bottom:1px solid #232838}
 .prof{font:11px/1.5 ui-monospace,monospace;color:#7c8598;margin:.3em 0}
@@ -1118,10 +1327,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         last_gen = g
         P.append(f"<tr{trclass}><td class='sp'>{esc(sp)}</td>" + "".join(cells) + "</tr>")
     P.append("</table>")
-    P.append("<p class='sub'>The reachable ones (★ not in an O/WR/Herbig column): "
-             + esc(", ".join(f"{sp} – {STAR_FULL[st]}"
-                   for sp, st, _ in sorted(gf_reach, key=lambda x: (STARS.index(x[1]), x[0]))))
-             + f". {len(gf_exotic)} more sit in O/WR/Herbig columns and are effectively unobtainable.</p>")
+    P.append(f"<p class='sub'>{len(gf_reach)} of the ★ above sit in reachable columns; "
+             f"{len(gf_exotic)} more are in O/WR/Herbig columns and effectively unobtainable.</p>")
 
     ref_txt = f"{reconcile_total:,}" if reconcile_total else "~4,500"
     P.append('<div class="warn"><b>Reconciliation.</b> The community "Undiscovered Odyssey Biology Count" '
@@ -1178,7 +1385,11 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
              "confirmed there — likely restricted to other spiral arms — are struck through in a footnote "
              "and not counted. Near-universal species not yet confirmed in a region are shown "
              "<span class='rfsoft' style='padding:0 4px'>dimmed</span>. <b>Well-sampled regions first.</b> "
-             "A gap counts as <b>viable</b> only if that star type is known to occur in the region.</p>")
+             "A gap counts as <b>viable</b> only if that star type is known to occur in the region. The "
+             "&Sigma; row totals viable firsts per star type — hover a column header for a tip on that star "
+             "type. A colour variant is set by the plant's <i>companion</i> star, not necessarily the one "
+             "it's visually orbiting, so a neutron / white-dwarf / brown-dwarf column means finding one as "
+             "a secondary with its own close planets.</p>")
     _shown_thin_header = [False]
 
     def viable_count(reg):
@@ -1196,6 +1407,13 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         return n, dead
 
     reg_stats = {r: viable_count(r) for r in regions}
+    P.append("<div id='region-map-wrap'>" + _build_region_map_svg(reg_stats)
+             + "<div id='region-map-label' class='region-map-label'>Hover a region for its name</div></div>")
+    P.append("<p class='sub'>Click a region to jump to its table below. The number shown is its viable "
+             "regional firsts — <span style='color:#f0c24a'>amber</span> for the top third of regions, "
+             "light grey otherwise.</p>")
+    P.append("<script>" + _region_map_js() + "</script>")
+    P.append("<div class='region-map-clear'></div>")
 
     def rank_key(r):
         return (0 if cover.get(r, 0) >= 400 else 1, -reg_stats[r][0])
@@ -1208,7 +1426,6 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                      "(star-population numbers unreliable) —</h3>")
 
         rows_html, absent_sp = [], []
-        star_gap = collections.Counter()
         col_totals = collections.Counter()
         last_gen = None
         for sp in species:
@@ -1239,8 +1456,6 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                     cells.append(f"<td class='{cls}' title='{esc(sp)} – {esc(col)} ({STAR_FULL[star]})'>{chip(col)}</td>")
                     any_missing = True
                     col_totals[star] += 1
-                    if st_state == "here":
-                        star_gap[star] += 1
             if not any_missing:
                 continue
             g = sp.split()[0]
@@ -1253,36 +1468,15 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         deadtxt = f", {dead} where the star type is absent here" if dead else ""
         summ = (f"{esc(reg)} &nbsp;—&nbsp; <b>{viable}</b> viable regional firsts{deadtxt} "
                 f"<span class='prof'>&nbsp;({cov:,} systems sampled, {len(absent_sp)} species not present)</span>")
-        P.append(f"<details><summary>{summ}</summary><div class='region'>")
+        P.append(f"<details id='region-{_slug(reg)}'><summary>{summ}</summary><div class='region'>")
         P.append("<table class='mx'><tr><th class='sp'></th>"
                  + "".join(f"<th title='{STAR_FULL[s]}'>{STAR_LABEL[s]}</th>" for s in STARS) + "</tr>")
         P.append("<tr class='mxtot' title='viable regional firsts in this column'><td class='sp sub'>&Sigma;</td>"
                  + "".join(f"<td>{col_totals[s] or ''}</td>" for s in STARS) + "</tr>")
         P.append("".join(rows_html) + "</table>")
 
-        top = star_gap.most_common()
-        if top:
-            parts = [f"<b>{STAR_FULL[st]}</b> ({n})" + (f" — {STAR_TIP[st]}" if st in STAR_TIP else "")
-                     for st, n in top[:6]]
-            P.append("<p class='hint'><b>Where the firsts are (confirmed species):</b> "
-                     + "; ".join(parts) + ".</p>")
-        P.append("<p class='hint'>The plant's planet usually orbits a <i>companion</i> star — that "
-                 "companion's class sets the colour, so a neutron / white-dwarf / brown-dwarf variant "
-                 "means finding one as a secondary with its own close planets. "
-                 "<i>Italic ?</i> rows are galaxy-wide species not yet confirmed here — probably present, "
-                 "but the first confirmation would itself be the regional first.</p>")
-        if absent_sp:
-            P.append("<details class='sub'><summary>" + str(len(absent_sp))
-                     + " species never confirmed in this region (likely restricted to other spiral arms — "
-                     "excluded)</summary><p style='text-decoration:line-through'>"
-                     + esc(", ".join(absent_sp)) + "</p></details>")
-        pr = prof.get(reg)
-        if pr:
-            P.append("<p class='prof'>you've scanned bio here around: "
-                     + "  ".join(f"{k} {v}" for k, v in pr.most_common(12)) + "</p>")
-
         # material-related species for this region (same viable/absent logic,
-        # material axis instead of star)
+        # material axis instead of star) — shown right below the star matrix
         mat_rows_html, absent_sp_mat = [], []
         mat_totals = collections.Counter()
         last_gen = None
@@ -1334,6 +1528,18 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                          + " material-related species never confirmed in this region</summary>"
                          "<p style='text-decoration:line-through'>"
                          + esc(", ".join(absent_sp_mat)) + "</p></details>")
+
+        P.append("<p class='hint'><i>Italic ?</i> rows are galaxy-wide species not yet confirmed here — "
+                 "probably present, but the first confirmation would itself be the regional first.</p>")
+        if absent_sp:
+            P.append("<details class='sub'><summary>" + str(len(absent_sp))
+                     + " species never confirmed in this region (likely restricted to other spiral arms — "
+                     "excluded)</summary><p style='text-decoration:line-through'>"
+                     + esc(", ".join(absent_sp)) + "</p></details>")
+        pr = prof.get(reg)
+        if pr:
+            P.append("<p class='prof'>you've scanned bio here around: "
+                     + "  ".join(f"{k} {v}" for k, v in pr.most_common(12)) + "</p>")
 
         P.append("</div></details>")
 

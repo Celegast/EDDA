@@ -24,6 +24,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 from .stats import SECTOR_SIZE
+from ._region_map_data import _LANDMARKS, _REG_X0, _REG_Z0, _REG_PX_SZ
 
 
 # ---------------------------------------------------------------------------
@@ -53,16 +54,8 @@ def _write_interactive(fig: go.Figure, out_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Reference landmarks (ED galactic coordinates)
+# Reference landmarks (ED galactic coordinates) — _LANDMARKS from _region_map_data
 # ---------------------------------------------------------------------------
-
-# (name, x, y, z, colour)
-_LANDMARKS = [
-    ("Sol",           0,           0,           0,           "yellow"),
-    ("Colonia",      -9530.5,     -910.28125,  19808.125,   "#ff9944"),
-    ("Sag A*",        25.21875,   -20.90625,   25899.96875, "#ff44aa"),
-    ("Beagle Point", -1111.5625,  -134.21875,  65269.75,    "#44ffcc"),
-]
 
 
 def _mark_landmarks_2d(ax, use_y: bool = False) -> None:
@@ -178,13 +171,8 @@ def _current_pos_trace_3d(pos: dict) -> go.Scatter3d:
 
 
 # ---------------------------------------------------------------------------
-# Galactic region overlay helpers
+# Galactic region overlay helpers — _REG_X0/_REG_Z0/_REG_PX_SZ from _region_map_data
 # ---------------------------------------------------------------------------
-# Region bitmap parameters from klightspeed/EliteDangerousRegionMap
-_REG_X0    = -49985.0       # game X at pixel column 0
-_REG_Z0    = -24105.0       # game Z at bitmap row 0  (row 0 = minimum Z)
-_REG_PX_SZ =  4096.0 / 83  # ly per pixel (≈ 49.35 ly)
-
 _region_bm_cache: dict[int, np.ndarray] = {}
 
 
