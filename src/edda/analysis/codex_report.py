@@ -333,15 +333,28 @@ def commander_names(conn: sqlite3.Connection) -> set[str]:
     return {r[0].strip().upper() for r in rows if r[0] and r[0].strip()}
 
 
-def db_region_data(conn: sqlite3.Connection):
+def db_region_data(conn: sqlite3.Connection, star_map: dict):
     """From the report DB, per region:
        stars[region][star_code]  = systems with that star type present
        cover[region]             = systems visited (confidence)
        prof[region][star_code]   = your bio scans by parent star ('tried here?')
-       personal_region[region][species] = star codes you've personally scanned
-                                   that species around, IN THIS REGION
+       personal_region[region][species] = colours you've personally scanned
+                                   that species as, IN THIS REGION
        personal_global[species]  = the same, but anywhere (for the whole-galaxy
-                                   matrix, which isn't region-scoped)."""
+                                   matrix, which isn't region-scoped).
+       Colours come straight from organic_scans.variant_localised (the game's
+       own "Species - Colour" string for that scan) when available — not
+       inferred from the parent star's type. Elite Dangerous's colour-
+       determining star isn't reliably "the nearest star in the orbital
+       Parents chain" (confirmed: a body whose immediate parent was a T
+       Tauri star still came back with the colour variant belonging to a
+       distant, unrelated B star elsewhere in the system), so guessing via
+       parent_star_id can silently pick the wrong star.
+       `variant_localised` was only added to the ScanOrganic journal event
+       partway through Odyssey's life, though — scans from before then have
+       no colour recorded at all, so for those (and only those) we fall back
+       to the old parent-star guess via Canonn's star_map. Best-effort; can
+       occasionally mis-attribute in complex multi-star systems as above."""
     stars: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     prof: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     personal_region: dict[str, dict] = collections.defaultdict(lambda: collections.defaultdict(set))
@@ -366,18 +379,24 @@ def db_region_data(conn: sqlite3.Connection):
         WHERE o.scan_state='Analyse' AND s.region>''
         GROUP BY s.region, ps.subtype"""):
         prof[reg][_SUBTYPE_STAR.get(st or "", (st or "?").split("_")[0])] += n
-    for reg, sp, st in conn.execute("""
-        SELECT s.region, o.species_localised, ps.subtype
+    for reg, variant, sp_local, st in conn.execute("""
+        SELECT s.region, o.variant_localised, o.species_localised, ps.subtype
         FROM organic_scans o
         JOIN systems s ON s.system_address=o.system_address
         JOIN bodies b  ON b.system_address=o.system_address AND b.body_id=o.body_id
         LEFT JOIN bodies ps ON ps.system_address=o.system_address AND ps.body_id=b.parent_star_id
         WHERE o.scan_state='Analyse' AND o.species_localised>'' AND s.region>''
-        GROUP BY s.region, o.species_localised, ps.subtype"""):
-        c = _SUBTYPE_STAR.get(st or "")
-        if c:
-            personal_region[reg][sp].add(c)
-            personal_global[sp].add(c)
+        GROUP BY s.region, o.variant_localised, o.species_localised, ps.subtype"""):
+        sp, _, col = (variant or "").rpartition(" - ")
+        sp, col = sp.strip(), col.strip()
+        if not col:
+            # pre-variant_localised journal: best-effort fallback via parent star
+            sp = sp_local
+            star_code = _SUBTYPE_STAR.get(st or "")
+            col = star_map.get(sp, {}).get(star_code) if star_code else None
+        if col:
+            personal_region[reg][sp].add(col)
+            personal_global[sp].add(col)
 
     return stars, cover, prof, personal_region, personal_global
 
@@ -993,7 +1012,7 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                 cls = "gfx" if star in EXOTIC else "gf"
                 cells.append(f"<td class='{cls}' title='{esc(sp)} — {STAR_FULL[star]}: galactic first'>{mark}</td>")
             elif col:
-                if star in personal_global.get(sp, ()):
+                if col in personal_global.get(sp, ()):
                     cells.append(f"<td class='mine' title='{esc(sp)} – {esc(col)} ({STAR_FULL[star]}): "
                                  f"in your codex'>{chip(col)}</td>")
                 else:
@@ -1080,7 +1099,7 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                     if col in my_firsts.get(reg, {}).get(sp, ()):
                         cells.append(f"<td class='myfirst' title='{esc(sp)} – {esc(col)}: "
                                      f"you discovered this regional first!'>\U0001f3c6{chip(col)}</td>")
-                    elif star in personal_region.get(reg, {}).get(sp, ()):
+                    elif col in personal_region.get(reg, {}).get(sp, ()):
                         cells.append(f"<td class='mine' title='{esc(sp)} – {esc(col)}: in your codex'>{chip(col)}</td>")
                     else:
                         cells.append(f"<td class='done'>{chip(col)}</td>")
@@ -1238,7 +1257,7 @@ def build_codex_report(conn: sqlite3.Connection, out_path: Path) -> None:
     cmdrs = commander_names(conn)
     found, regions, genus, sp_regions, sp_here, my_firsts, my_first_list, discoverer_counts = load_found(cmdrs)
     gaps = load_gaps()
-    region_stars, cover, prof, personal_region, personal_global = db_region_data(conn)
+    region_stars, cover, prof, personal_region, personal_global = db_region_data(conn, star_map)
     reconcile_total = load_reconciliation_total()
     monthly = load_monthly_series()
     leaderboard = build_commander_leaderboard(discoverer_counts)
