@@ -77,6 +77,15 @@ STAR_FULL = {"O": "O", "B": "B", "A": "A", "F": "F", "G": "G", "K": "K", "M": "M
              "Y": "Y Brown Dwarf", "W": "Wolf-Rayet", "D": "White Dwarf", "N": "Neutron Star"}
 EXOTIC = {"O", "W", "AeBe"}   # bio around these is near-nonexistent galaxy-wide
 EASY = {"F", "G", "K", "M", "A", "Y"}
+
+# material-related species key off a surface trace element instead of a star.
+# Every material-related species in Canonn uses exactly one of these two
+# 6-element sets — one combined column list covers both (each species leaves
+# the other 6 columns blank, same convention as STARS does for missing variants).
+MATERIALS = ["Mercury", "Niobium", "Tin", "Tungsten", "Molybdenum", "Cadmium",
+             "Technetium", "Tellurium", "Polonium", "Ruthenium", "Antimony", "Yttrium"]
+# genera that only appear material-related (not in the star-grid GEN_ORDER list)
+MAT_GEN_ORDER = ["Bacterium", "Concha", "Electricae", "Fumerola", "Fungoida", "Osseus", "Recepta"]
 STAR_TIP = {
     "Y": "brown dwarfs are everywhere",
     "L": "L dwarfs common in the disc", "T": "T dwarfs common",
@@ -333,11 +342,33 @@ def commander_names(conn: sqlite3.Connection) -> set[str]:
     return {r[0].strip().upper() for r in rows if r[0] and r[0].strip()}
 
 
-def db_region_data(conn: sqlite3.Connection, star_map: dict):
+def _guess_material_colour(species_materials: dict, body_materials: list) -> str | None:
+    """Best-effort colour for a material-related species on a body, from the
+    body's full material list `[(name_lower, percent), ...]` sorted richest
+    first. `species_materials` is {MaterialName: colour} for this species (6
+    entries — the "Species - Colour" variant_localised string is authoritative
+    when we have it; this is only the fallback for scans that predate it).
+
+    Percentage doesn't reliably predict which of several present candidates
+    is the real one (verified against known personal finds: the true colour
+    has come from both the higher- and the lower-percentage candidate on
+    different bodies), so a multi-candidate body is genuinely ambiguous —
+    only report a colour when exactly one of the species' candidate
+    materials is present at all."""
+    candidates = {name.lower(): (name, colour) for name, colour in species_materials.items()}
+    present = [name for name, _pct in body_materials if name in candidates]
+    if len(present) != 1:
+        return None
+    return candidates[present[0]][1]
+
+
+def db_region_data(conn: sqlite3.Connection, star_map: dict, mat_map: dict):
     """From the report DB, per region:
        stars[region][star_code]  = systems with that star type present
        cover[region]             = systems visited (confidence)
        prof[region][star_code]   = your bio scans by parent star ('tried here?')
+       region_materials[region][material] = systems with a body carrying that
+                                   surface trace element (material-related species)
        personal_region[region][species] = colours you've personally scanned
                                    that species as, IN THIS REGION
        personal_global[species]  = the same, but anywhere (for the whole-galaxy
@@ -353,8 +384,9 @@ def db_region_data(conn: sqlite3.Connection, star_map: dict):
        `variant_localised` was only added to the ScanOrganic journal event
        partway through Odyssey's life, though — scans from before then have
        no colour recorded at all, so for those (and only those) we fall back
-       to the old parent-star guess via Canonn's star_map. Best-effort; can
-       occasionally mis-attribute in complex multi-star systems as above."""
+       to a best-effort guess: parent star type for star-gated species (see
+       caveat above), or the scanned body's own surface material composition
+       for material-related ones (see _guess_material_colour)."""
     stars: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     prof: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     personal_region: dict[str, dict] = collections.defaultdict(lambda: collections.defaultdict(set))
@@ -379,26 +411,54 @@ def db_region_data(conn: sqlite3.Connection, star_map: dict):
         WHERE o.scan_state='Analyse' AND s.region>''
         GROUP BY s.region, ps.subtype"""):
         prof[reg][_SUBTYPE_STAR.get(st or "", (st or "?").split("_")[0])] += n
-    for reg, variant, sp_local, st in conn.execute("""
-        SELECT s.region, o.variant_localised, o.species_localised, ps.subtype
+    # Pass 1: the common, correct case — the game's own recorded colour.
+    for reg, variant, sp_local in conn.execute("""
+        SELECT s.region, o.variant_localised, o.species_localised
         FROM organic_scans o
         JOIN systems s ON s.system_address=o.system_address
-        JOIN bodies b  ON b.system_address=o.system_address AND b.body_id=o.body_id
-        LEFT JOIN bodies ps ON ps.system_address=o.system_address AND ps.body_id=b.parent_star_id
-        WHERE o.scan_state='Analyse' AND o.species_localised>'' AND s.region>''
-        GROUP BY s.region, o.variant_localised, o.species_localised, ps.subtype"""):
-        sp, _, col = (variant or "").rpartition(" - ")
+        WHERE o.scan_state='Analyse' AND o.species_localised>'' AND o.variant_localised>'' AND s.region>''
+        GROUP BY s.region, o.variant_localised, o.species_localised"""):
+        sp, _, col = variant.rpartition(" - ")
         sp, col = sp.strip(), col.strip()
-        if not col:
-            # pre-variant_localised journal: best-effort fallback via parent star
-            sp = sp_local
-            star_code = _SUBTYPE_STAR.get(st or "")
-            col = star_map.get(sp, {}).get(star_code) if star_code else None
         if col:
             personal_region[reg][sp].add(col)
             personal_global[sp].add(col)
 
-    return stars, cover, prof, personal_region, personal_global
+    # Pass 2: fallback for scans that predate variant_localised. Star-gated
+    # species fall back to the parent star's type; material-related species
+    # fall back to the scanned body's own surface material composition.
+    for reg, sp_local, sa, bid, st in conn.execute("""
+        SELECT s.region, o.species_localised, o.system_address, o.body_id, ps.subtype
+        FROM organic_scans o
+        JOIN systems s ON s.system_address=o.system_address
+        JOIN bodies b  ON b.system_address=o.system_address AND b.body_id=o.body_id
+        LEFT JOIN bodies ps ON ps.system_address=o.system_address AND ps.body_id=b.parent_star_id
+        WHERE o.scan_state='Analyse' AND o.species_localised>''
+          AND (o.variant_localised IS NULL OR o.variant_localised='') AND s.region>''
+        GROUP BY s.region, o.species_localised, o.system_address, o.body_id, ps.subtype"""):
+        col = None
+        if sp_local in star_map:
+            star_code = _SUBTYPE_STAR.get(st or "")
+            col = star_map.get(sp_local, {}).get(star_code) if star_code else None
+        elif sp_local in mat_map:
+            body_mats = conn.execute("""
+                SELECT LOWER(name), percent FROM body_materials
+                WHERE system_address=? AND body_id=? ORDER BY percent DESC""", (sa, bid)).fetchall()
+            col = _guess_material_colour(mat_map[sp_local], body_mats)
+        if col:
+            personal_region[reg][sp_local].add(col)
+            personal_global[sp_local].add(col)
+
+    region_materials: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for reg, mat, n in conn.execute("""
+        SELECT s.region, LOWER(bm.name), COUNT(DISTINCT s.system_address)
+        FROM body_materials bm
+        JOIN systems s ON s.system_address=bm.system_address
+        WHERE s.region>'' AND bm.percent>0
+        GROUP BY s.region, LOWER(bm.name)"""):
+        region_materials[reg][mat] += n
+
+    return stars, cover, prof, personal_region, personal_global, region_materials
 
 
 # ── report ──────────────────────────────────────────────────────────────────
@@ -902,7 +962,7 @@ def _stats_leaderboard_js(leaderboard: dict | None, commander_names_: set[str]) 
 
 
 def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
-            region_stars, cover, prof, personal_region, personal_global,
+            region_stars, cover, prof, personal_region, personal_global, region_materials,
             my_firsts, my_first_list, reconcile_total, cmdrs,
             monthly, leaderboard, out_path: Path) -> None:
     NR = len(regions)
@@ -955,6 +1015,37 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                 if star not in EXOTIC and reg not in found.get((sp, col), ()) and spawns(reg, star):
                     rf_real += 1
 
+    # ---- material-related species (Bacterium Nebulus, Concha Renibus, …) ----
+    # Same regional-first method, but the column axis is a surface trace
+    # element instead of a star. No galactic-first tracking is possible for
+    # these — Missing Colours.tsv (the "Has Gap" source) is star-columns only,
+    # nothing equivalent exists for materials.
+    def spawns_mat(reg, material):
+        """Does region `reg` carry bodies rich in `material` in enough numbers
+        to be worth hunting? Same shape/threshold as spawns(), material axis."""
+        cov = cover.get(reg, 0)
+        if cov < COVER_OK:
+            return True
+        need = max(3, round(cov * 0.004))
+        return region_materials.get(reg, {}).get(material.lower(), 0) >= need
+
+    species_mat = sorted(mat_map, key=lambda s: (MAT_GEN_ORDER.index(s.split()[0])
+                         if s.split()[0] in MAT_GEN_ORDER else 99, s))
+
+    rf_mat_raw = 0
+    for sp in species_mat:
+        for mat, col in mat_map.get(sp, {}).items():
+            rf_mat_raw += NR - len(found.get((sp, col), ()))
+
+    rf_mat_real = 0
+    for reg in regions:
+        for sp in species_mat:
+            if sp_state(reg, sp) == "absent":
+                continue
+            for mat, col in mat_map.get(sp, {}).items():
+                if reg not in found.get((sp, col), ()) and spawns_mat(reg, mat):
+                    rf_mat_real += 1
+
     P = [f"<style>{CSS}</style><h1>{pie_logo()}Odyssey Codex Report</h1>"]
     P.append(
         f"<p class='sub'>A colour variant not yet logged in a region is a <b>regional first</b> there; "
@@ -968,7 +1059,10 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         f"<b>{len(gf_reach) + len(gf_exotic)}</b> galactic firsts believed to exist and never logged — "
         f"<b>{len(gf_reach)}</b> of them around ordinary stars. The galactic firsts are the same in every "
         f"region and have gone unfound across ~280&nbsp;million scanned systems, so the per-region view "
-        f"below shows only regional firsts — those you can realistically be first to log.</p>")
+        f"below shows only regional firsts — those you can realistically be first to log. A further "
+        f"<b>{rf_mat_real:,}</b> realistic regional firsts come from <b>material-related</b> species — "
+        f"colour set by a surface trace element instead of a star — covered separately below since no "
+        f"galactic-first data exists for them.</p>")
 
     # ---- your own regional firsts, as a flat table -------------------------
     if my_first_list:
@@ -1044,6 +1138,39 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
              "<span class='rfdead' style='padding:1px 6px'>region has ~no such star</span>"
              "<span class='na' style='padding:1px 6px'>n/a</span>. "
              "Galactic firsts are <b>not</b> shown per region.</p>")
+
+    # ---- material-related species — the whole-galaxy picture -----------------
+    if species_mat:
+        P.append("<h2>Material-related species — the whole-galaxy picture</h2>")
+        P.append("<p class='sub'>Same idea as the star matrix above, but the column is a surface trace "
+                 "element instead of a star — these species (Bacterium, Concha, Electricae, Fumerola, "
+                 "Fungoida, Osseus, Recepta) key their colour off whichever of six named materials the "
+                 "body is richest in. No galactic-first tracking exists for these (Missing Colours.tsv is "
+                 "star-columns only), so every valid variant just shows confirmed or in-your-codex.</p>")
+        P.append("<p class='sub legend'>"
+                 "<span class='confirmed' style='padding:1px 7px'>confirmed somewhere</span>"
+                 "<span class='mine' style='padding:1px 7px'>in your codex</span></p>")
+        P.append("<table class='mx'><tr><th class='sp'></th>"
+                 + "".join(f"<th title='{m}'>{m[:3]}</th>" for m in MATERIALS) + "</tr>")
+        last_gen = None
+        for sp in species_mat:
+            cells = []
+            for mat in MATERIALS:
+                col = mat_map.get(sp, {}).get(mat)
+                if col:
+                    if col in personal_global.get(sp, ()):
+                        cells.append(f"<td class='mine' title='{esc(sp)} – {esc(col)} ({esc(mat)}): "
+                                     f"in your codex'>{chip(col)}</td>")
+                    else:
+                        cells.append(f"<td class='confirmed' title='{esc(sp)} – {esc(col)} ({esc(mat)}): "
+                                     f"confirmed'>{chip(col)}</td>")
+                else:
+                    cells.append("<td class='na'></td>")
+            g = sp.split()[0]
+            trclass = " class='gsep'" if last_gen and g != last_gen else ""
+            last_gen = g
+            P.append(f"<tr{trclass}><td class='sp'>{esc(sp)}</td>" + "".join(cells) + "</tr>")
+        P.append("</table>")
 
     # ---- per-region matrices (regional firsts only)
     P.append("<h2>By region — regional firsts</h2><p class='sub'>Only species already <b>confirmed to occur "
@@ -1153,6 +1280,61 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         if pr:
             P.append("<p class='prof'>you've scanned bio here around: "
                      + "  ".join(f"{k} {v}" for k, v in pr.most_common(12)) + "</p>")
+
+        # material-related species for this region (same viable/absent logic,
+        # material axis instead of star)
+        mat_rows_html, absent_sp_mat = [], []
+        mat_totals = collections.Counter()
+        last_gen = None
+        for sp in species_mat:
+            st_state = sp_state(reg, sp)
+            if st_state == "absent":
+                absent_sp_mat.append(sp)
+                continue
+            cells, any_missing = [], False
+            for mat in MATERIALS:
+                col = mat_map.get(sp, {}).get(mat)
+                if not col:
+                    cells.append("<td class='na'></td>")
+                    continue
+                if reg in found.get((sp, col), ()):
+                    if col in my_firsts.get(reg, {}).get(sp, ()):
+                        cells.append(f"<td class='myfirst' title='{esc(sp)} – {esc(col)}: "
+                                     f"you discovered this regional first!'>\U0001f3c6{chip(col)}</td>")
+                    elif col in personal_region.get(reg, {}).get(sp, ()):
+                        cells.append(f"<td class='mine' title='{esc(sp)} – {esc(col)}: in your codex'>{chip(col)}</td>")
+                    else:
+                        cells.append(f"<td class='done'>{chip(col)}</td>")
+                elif not spawns_mat(reg, mat):
+                    cells.append(f"<td class='rfdead' title='{esc(sp)} – {esc(col)}: "
+                                 f"no {esc(mat)}-rich bodies known in this region'>{chip(col)}</td>")
+                    any_missing = True
+                else:
+                    cls = "rf" if st_state == "here" else "rfsoft"
+                    cells.append(f"<td class='{cls}' title='{esc(sp)} – {esc(col)} ({esc(mat)})'>{chip(col)}</td>")
+                    any_missing = True
+                    mat_totals[mat] += 1
+            if not any_missing:
+                continue
+            g = sp.split()[0]
+            trclass = " class='gsep'" if last_gen and g != last_gen else ""
+            last_gen = g
+            nm = esc(sp) if st_state == "here" else f"<i>{esc(sp)}</i> <span class='sub'>?</span>"
+            mat_rows_html.append(f"<tr{trclass}><td class='sp'>{nm}</td>" + "".join(cells) + "</tr>")
+
+        if mat_rows_html:
+            P.append("<h3 style='margin-top:1.2em'>Material-related species</h3>")
+            P.append("<table class='mx'><tr><th class='sp'></th>"
+                     + "".join(f"<th title='{m}'>{m[:3]}</th>" for m in MATERIALS) + "</tr>")
+            P.append("<tr class='mxtot' title='viable regional firsts in this column'><td class='sp sub'>&Sigma;</td>"
+                     + "".join(f"<td>{mat_totals[m] or ''}</td>" for m in MATERIALS) + "</tr>")
+            P.append("".join(mat_rows_html) + "</table>")
+            if absent_sp_mat:
+                P.append("<details class='sub'><summary>" + str(len(absent_sp_mat))
+                         + " material-related species never confirmed in this region</summary>"
+                         "<p style='text-decoration:line-through'>"
+                         + esc(", ".join(absent_sp_mat)) + "</p></details>")
+
         P.append("</div></details>")
 
     # ---- by star type ------------------------------------------------------
@@ -1226,17 +1408,61 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             P.append("</table>")
         P.append("</div></details>")
 
-    # ---- materials appendix
-    if mat_map:
-        P.append("<h2>Material-gated species (Bacterium / Concha / Osseus / Recepta …)</h2>"
-                 "<p class='sub'>These variants key off a rare <i>surface material</i>, not the star. "
-                 "Colour follows the material. Region tracking for these is spotty in the source data, so "
-                 "this is just the variant list — hunt planets rich in the named element.</p>")
-        P.append("<table class='sum'><tr><th>Species</th><th>Variants (colour – material)</th></tr>")
-        for sp in sorted(mat_map):
-            vs = ", ".join(f"{chip(c)} {esc(c)}–{esc(m)}" for m, c in mat_map[sp].items())
-            P.append(f"<tr><td>{esc(sp)}</td><td class='sub'>{vs}</td></tr>")
-        P.append("</table>")
+    # ---- by material ---------------------------------------------------------
+    if species_mat:
+        P.append("<h2>By material — where to land your ship</h2>")
+        P.append("<p class='sub'>Same idea as the by-star-type view, but for material-related species: pick "
+                 "the trace element you're prospecting for and see which regions have the most open entries "
+                 "for it (only species already confirmed present in the region count).</p>")
+
+        def mat_viable_regions(sp, col, mat):
+            return [reg for reg in regions
+                    if sp_state(reg, sp) != "absent"
+                    and reg not in found.get((sp, col), ())
+                    and spawns_mat(reg, mat)]
+
+        mat_rows_by_col: dict[str, list] = {}
+        mat_totals_by_col: dict[str, int] = {}
+        for mat in MATERIALS:
+            rows, total = [], 0
+            for sp in species_mat:
+                col = mat_map.get(sp, {}).get(mat)
+                if not col:
+                    continue
+                regs = mat_viable_regions(sp, col, mat)
+                if regs:
+                    rows.append((sp, col, regs))
+                    total += len(regs)
+            mat_rows_by_col[mat] = rows
+            mat_totals_by_col[mat] = total
+
+        for mat in sorted(MATERIALS, key=lambda m: -mat_totals_by_col.get(m, 0)):
+            rows = mat_rows_by_col[mat]
+            if not rows:
+                continue
+            region_counts: collections.Counter = collections.Counter()
+            region_species: dict[str, list] = collections.defaultdict(list)
+            for sp, col, regs in rows:
+                for reg in regs:
+                    region_counts[reg] += 1
+                    region_species[reg].append((sp, col))
+            P.append(f"<details><summary><b>{esc(mat)}</b> &nbsp;—&nbsp; "
+                     f"<b>{mat_totals_by_col[mat]}</b> viable regional firsts</summary><div class='region'>")
+            if region_counts:
+                P.append("<table class='sum'><tr><th>Region</th><th>Open</th><th>Species</th></tr>")
+                ranked = sorted(region_counts, key=lambda r: (0 if cover.get(r, 0) >= 400 else 1, -region_counts[r]))
+                thin_shown = False
+                for reg in ranked:
+                    if cover.get(reg, 0) < 400 and not thin_shown:
+                        thin_shown = True
+                        P.append("<tr><td colspan='3' style='color:#8892a8;padding-top:8px'>"
+                                  "— under-sampled regions (star-population numbers unreliable) —</td></tr>")
+                    n = region_counts[reg]
+                    sp_list = ", ".join(f"{chip(col)} {esc(sp)}" for sp, col in sorted(region_species[reg]))
+                    P.append(f"<tr><td>{esc(reg)}</td><td class='n'>{n}</td>"
+                             f"<td class='sub'>{sp_list}</td></tr>")
+                P.append("</table>")
+            P.append("</div></details>")
 
     # ---- statistics (community-wide monthly activity + commander leaderboard)
     stats_html = _stats_section_html(monthly, leaderboard, cmdrs)
@@ -1249,6 +1475,7 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
     print(f"  wrote {out_path}")
     print(f"  realistic regional firsts: {rf_real:,}   (raw incl. absent species: {rf_raw - rf_exotic:,})")
     print(f"  galactic firsts: {len(gf_reach)} reachable + {len(gf_exotic)} exotic")
+    print(f"  material-related regional firsts: {rf_mat_real:,}   (raw incl. absent species: {rf_mat_raw:,})")
 
 
 def build_codex_report(conn: sqlite3.Connection, out_path: Path) -> None:
@@ -1257,11 +1484,12 @@ def build_codex_report(conn: sqlite3.Connection, out_path: Path) -> None:
     cmdrs = commander_names(conn)
     found, regions, genus, sp_regions, sp_here, my_firsts, my_first_list, discoverer_counts = load_found(cmdrs)
     gaps = load_gaps()
-    region_stars, cover, prof, personal_region, personal_global = db_region_data(conn, star_map)
+    region_stars, cover, prof, personal_region, personal_global, region_materials = \
+        db_region_data(conn, star_map, mat_map)
     reconcile_total = load_reconciliation_total()
     monthly = load_monthly_series()
     leaderboard = build_commander_leaderboard(discoverer_counts)
     _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
-            region_stars, cover, prof, personal_region, personal_global,
+            region_stars, cover, prof, personal_region, personal_global, region_materials,
             my_firsts, my_first_list, reconcile_total, cmdrs,
             monthly, leaderboard, out_path)
