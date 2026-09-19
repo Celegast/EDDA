@@ -395,6 +395,45 @@ def _boundary_runs(row_a: list[int], row_b: list[int], n: int) -> list[tuple[int
     return runs
 
 
+def _region_cells_and_grid() -> tuple[dict[int, list[tuple[int, int, int]]], list[list[int]], int, int]:
+    """(cells, grid, ncols, nrows) — the coarse, row-flipped region bitmap
+    shared by every map in this report (see _build_region_map_svg's
+    docstring for why it's flipped). cells[rid] = [(c0, row, run_length),
+    ...]; grid[row][col] = region id, 0 where none."""
+    from ._region_map_data import regionmap as rle_rows
+
+    STRIDE = 8
+    ncols = nrows = 2048 // STRIDE
+    cells: dict[int, list[tuple[int, int, int]]] = collections.defaultdict(list)
+    grid: list[list[int]] = [[0] * ncols for _ in range(nrows)]
+    for r_out, orig_row in enumerate(rle_rows[::STRIDE]):
+        coarse = [0] * ncols
+        col = 0
+        for length, rid in orig_row:
+            c0, c1 = col // STRIDE, min((col + length - 1) // STRIDE, ncols - 1)
+            if c0 <= c1:
+                coarse[c0:c1 + 1] = [rid] * (c1 - c0 + 1)
+            col += length
+        rot_row = nrows - 1 - r_out
+        grid[rot_row] = coarse
+        for c0, length, rid in _rle_encode_row(coarse):
+            if rid > 0:
+                cells[rid].append((c0, rot_row, length))
+    return cells, grid, ncols, nrows
+
+
+def _region_border_path(grid: list[list[int]], ncols: int, nrows: int) -> str:
+    """A single static <path> tracing every true region-boundary edge in
+    `grid` — not stroked per-cell, which produced a hatched, flicker-prone
+    look (see _build_region_map_svg's docstring)."""
+    h_paths = [f"M{c0} {r+1}H{c1}" for r in range(nrows - 1) for c0, c1 in _boundary_runs(grid[r], grid[r + 1], ncols)]
+    cols = list(zip(*grid))
+    v_paths = [f"M{c+1} {r0}V{r1}" for c in range(ncols - 1)
+               for r0, r1 in _boundary_runs(list(cols[c]), list(cols[c + 1]), nrows)]
+    return (f"<path class='region-borders' d='{' '.join(h_paths + v_paths)}' fill='none' "
+            "stroke='#7c8aa8' stroke-width='.35' stroke-opacity='.55'/>")
+
+
 def _build_region_map_svg(reg_stats: dict[str, tuple[int, int]]) -> str:
     """A clickable galaxy map: each region is filled at low intensity in its
     own colour, brightening (plus a bright outline) on hover; a single thin
@@ -412,37 +451,12 @@ def _build_region_map_svg(reg_stats: dict[str, tuple[int, int]]) -> str:
     The Void stays on the left with Tenebrae on the right.
     Clicking a region jumps to its `<details>` block (id="region-{slug}")."""
     import colorsys
-    from ._region_map_data import regionmap as rle_rows, regions as region_names
+    from ._region_map_data import regions as region_names
 
-    STRIDE = 8
-    ncols = nrows = 2048 // STRIDE
+    cells, grid, ncols, nrows = _region_cells_and_grid()
+    border_layer = _region_border_path(grid, ncols, nrows)
     counts = {r: reg_stats.get(r, (0, 0))[0] for r in region_names if r}
     hi_tier = set(sorted(counts, key=lambda r: -counts[r])[:max(1, len(counts) // 3)])
-
-    # cells[rid] = [(start_col, row, run_length), ...], already rotated 180°;
-    # grid = the same data as a full 2D array, for boundary-edge tracing.
-    cells: dict[int, list[tuple[int, int, int]]] = collections.defaultdict(list)
-    grid: list[list[int]] = [[0] * ncols for _ in range(nrows)]
-    for r_out, orig_row in enumerate(rle_rows[::STRIDE]):
-        coarse = [0] * ncols
-        col = 0
-        for length, rid in orig_row:
-            c0, c1 = col // STRIDE, min((col + length - 1) // STRIDE, ncols - 1)
-            if c0 <= c1:
-                coarse[c0:c1 + 1] = [rid] * (c1 - c0 + 1)
-            col += length
-        rot_row = nrows - 1 - r_out
-        grid[rot_row] = coarse
-        for c0, length, rid in _rle_encode_row(coarse):
-            if rid > 0:
-                cells[rid].append((c0, rot_row, length))
-
-    h_paths = [f"M{c0} {r+1}H{c1}" for r in range(nrows - 1) for c0, c1 in _boundary_runs(grid[r], grid[r + 1], ncols)]
-    cols = list(zip(*grid))
-    v_paths = [f"M{c+1} {r0}V{r1}" for c in range(ncols - 1)
-               for r0, r1 in _boundary_runs(list(cols[c]), list(cols[c + 1]), nrows)]
-    border_layer = (f"<path class='region-borders' d='{' '.join(h_paths + v_paths)}' fill='none' "
-                    "stroke='#7c8aa8' stroke-width='.35' stroke-opacity='.55'/>")
 
     shapes: list[str] = []
     labels: list[str] = []
@@ -533,6 +547,154 @@ def _region_map_js() -> str:
     });
   });
   wrap.addEventListener('mouseleave', function(){ label.textContent = placeholder; });
+}())"""
+
+
+def _build_species_map_svg() -> str:
+    """A second, simpler galaxy map: same borders and landmarks as
+    _build_region_map_svg, but no per-region count, no click-to-jump — every
+    region is just a plain solid-fill toggle target (amber if the selected
+    species has any colour confirmed there, dim otherwise); which colours,
+    and what determines each, show in the side panel on hover instead of
+    on the map itself (see _species_map_js / _species_region_colours)."""
+    from ._region_map_data import regions as region_names
+
+    cells, grid, ncols, nrows = _region_cells_and_grid()
+    shapes = []
+    for rid in sorted(cells, key=lambda i: region_names[i] if i < len(region_names) and region_names[i] else ""):
+        name = region_names[rid] if rid < len(region_names) else None
+        if not name:
+            continue
+        rects = "".join(f"<rect x='{c0}' y='{row}' width='{length}' height='1'/>" for c0, row, length in cells[rid])
+        shapes.append(f"<g class='species-shape' data-slug='{_slug(name)}' data-name='{esc(name)}'>"
+                     f"<title>{esc(name)}</title>" + rects + "</g>")
+
+    parts = [f"<svg class='region-map' viewBox='0 0 {ncols} {nrows}' "
+             "preserveAspectRatio='xMidYMid meet' shape-rendering='crispEdges'>"]
+    parts += shapes
+    parts.append(_region_border_path(grid, ncols, nrows))
+    parts.append(_landmarks_svg(ncols, nrows))
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _species_region_colours(species: list, species_mat: list, star_map: dict, mat_map: dict,
+                             found: dict) -> dict[str, dict[str, list[list[str]]]]:
+    """{"Species Name": {region_slug: [[colour, hex, requirement], ...]}} —
+    every region with at least one community-confirmed colour of that
+    species: the colour's real hex (COLOUR_HEX) and what determines it (the
+    star type for star-gated species, the surface trace element for
+    material-related ones) — the species-distribution map's hover side panel
+    reads straight from this."""
+    data: dict[str, dict[str, list[list[str]]]] = {}
+    for sp_list, colour_map, is_star in ((species, star_map, True), (species_mat, mat_map, False)):
+        for sp in sp_list:
+            per_region: dict[str, list[list[str]]] = collections.defaultdict(list)
+            for key, col in colour_map.get(sp, {}).items():
+                hexval = COLOUR_HEX.get(col, "#778")
+                if is_star:
+                    full = STAR_FULL.get(key, key)
+                    requirement = full if "star" in full.lower() else full + " star"
+                else:
+                    requirement = key + "-rich surface"
+                for reg in found.get((sp, col), ()):
+                    per_region[_slug(reg)].append([col, hexval, requirement])
+            if per_region:
+                data[sp] = dict(per_region)
+    return data
+
+
+def _species_map_select_html(species: list, species_mat: list) -> str:
+    """<optgroup> per genus, <option> per species — one species per
+    dropdown pick, matching _species_region_colours' top-level keys."""
+    parts = ["<select id='species-map-select'>"]
+    last_gen, open_group = None, False
+    for sp in species + species_mat:
+        g = sp.split()[0]
+        if g != last_gen:
+            if open_group:
+                parts.append("</optgroup>")
+            parts.append(f"<optgroup label='{esc(g)}'>")
+            last_gen, open_group = g, True
+        parts.append(f"<option value='{esc(sp)}'>{esc(sp)}</option>")
+    if open_group:
+        parts.append("</optgroup>")
+    parts.append("</select>")
+    return "".join(parts)
+
+
+def _species_map_js() -> str:
+    return """(function(){
+  var sel = document.getElementById('species-map-select');
+  var count = document.getElementById('species-map-count');
+  var detail = document.getElementById('species-map-detail');
+  var wrap = document.getElementById('species-map-wrap');
+  if (!sel || !window.SPECIES_MAP_DATA) return;
+  var byRegion = {};
+
+  function showDetail(name, info){
+    detail.textContent = '';
+    var title = document.createElement('div');
+    title.className = 'smd-title';
+    title.textContent = name;
+    detail.appendChild(title);
+    if (!info || !info.length) {
+      var empty = document.createElement('div');
+      empty.className = 'smd-empty';
+      empty.textContent = name ? 'No colours confirmed here yet' : 'Hover a region';
+      detail.appendChild(empty);
+      return;
+    }
+    info.forEach(function(c){
+      var row = document.createElement('div');
+      row.className = 'smd-row';
+      var sw = document.createElement('span');
+      sw.className = 'smd-swatch';
+      sw.style.background = c[1];
+      var col = document.createElement('span');
+      col.className = 'smd-colour';
+      col.textContent = c[0];
+      var req = document.createElement('span');
+      req.className = 'smd-req';
+      req.textContent = c[2];
+      row.appendChild(sw); row.appendChild(col); row.appendChild(req);
+      detail.appendChild(row);
+    });
+  }
+
+  function apply(){
+    byRegion = SPECIES_MAP_DATA[sel.value] || {};
+    var n = 0;
+    document.querySelectorAll('.species-shape').forEach(function(g){
+      var found = !!byRegion[g.getAttribute('data-slug')];
+      g.classList.toggle('confirmed', found);
+      if (found) n++;
+    });
+    if (count) count.textContent = n + ' region' + (n === 1 ? '' : 's');
+    if (detail) showDetail('', null);
+  }
+  sel.addEventListener('change', apply);
+
+  document.querySelectorAll('.species-shape').forEach(function(g){
+    g.addEventListener('mouseenter', function(){
+      if (detail) showDetail(g.getAttribute('data-name'), byRegion[g.getAttribute('data-slug')]);
+    });
+    g.addEventListener('click', function(){
+      var det = document.getElementById('region-' + g.getAttribute('data-slug'));
+      if (!det) return;
+      det.open = true;
+      det.scrollIntoView({behavior:'smooth', block:'start'});
+      det.classList.remove('region-flash');
+      void det.offsetWidth;
+      det.classList.add('region-flash');
+    });
+  });
+  if (wrap) wrap.addEventListener('mouseleave', function(){ if (detail) showDetail('', null); });
+
+  // A different species each time the report is freshly opened, rather
+  // than always the same (often galaxy-wide) first option in the list.
+  sel.selectedIndex = Math.floor(Math.random() * sel.options.length);
+  apply();
 }())"""
 
 
@@ -698,6 +860,22 @@ table.mx tr.mxtot td{border-bottom:2px solid #232838;color:#6f7890;font-variant-
 .region-landmarks{pointer-events:none}
 .region-landmarks text{font-family:'Segoe UI',system-ui,sans-serif;font-style:italic;
   paint-order:stroke;stroke:#0a0c12cc;stroke-width:.5px;stroke-linejoin:round}
+#species-map-wrap{float:left;width:100%;max-width:560px;margin:0 22px 16px 0}
+#species-map-select{background:#161a26;color:#dbe0ec;border:1px solid #333a48;border-radius:4px;
+  padding:4px 8px;font:13px/1.4 'Segoe UI',system-ui,sans-serif;max-width:70%}
+.species-shape{cursor:pointer;fill:#1c2030;fill-opacity:.35;stroke:none;transition:fill .12s}
+.species-shape:hover{stroke:#7c8aa8;stroke-width:.6}
+.species-shape.confirmed{fill:#f0c24a;fill-opacity:.6;stroke:#f0c24a;stroke-width:.35}
+.species-shape.confirmed:hover{fill-opacity:.8;stroke:#fff;stroke-width:.7}
+.species-map-detail{float:left;width:100%;max-width:320px;background:#11141f;border:1px solid #1e2333;
+  border-radius:6px;padding:14px 16px;min-height:120px}
+.smd-title{color:#dbe2f0;font-size:1.05em;font-weight:700;margin-bottom:8px;min-height:1.3em}
+.smd-empty{color:#7c8598;font-size:.92em}
+.smd-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid #1e2333}
+.smd-row:first-of-type{border-top:none}
+.smd-swatch{width:13px;height:13px;border-radius:50%;flex:none;box-shadow:0 0 0 1px #0a0c12aa}
+.smd-colour{color:#dbe0ec;font-weight:600;min-width:9ch}
+.smd-req{color:#8892a8;font-size:.9em}
 @keyframes region-flash{0%{box-shadow:0 0 0 3px #f0c24a}100%{box-shadow:0 0 0 3px #f0c24a00}}
 .region-flash{animation:region-flash 1.6s ease-out}
 details>summary{cursor:pointer;color:#cdd6ea;font-size:1.02rem;padding:4px 0}
@@ -1413,6 +1591,25 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
              "regional firsts — <span style='color:#f0c24a'>amber</span> for the top third of regions, "
              "light grey otherwise.</p>")
     P.append("<script>" + _region_map_js() + "</script>")
+    P.append("<div class='region-map-clear'></div>")
+
+    # ---- species distribution map (pick a species, see which colours are confirmed where)
+    P.append("<h2>Species distribution map</h2>")
+    P.append("<p class='sub'>Pick a species to see which regions have any of its colours confirmed "
+             "(community data, same as the matrices above) — amber where at least one is. Hover a "
+             "region for exactly which colours and what determines each (star type, or surface "
+             "material); click one to jump to its table below, same as the map above. Unlike that "
+             "map, this one doesn't show an opportunity count — it's about where the species already "
+             "is, not what's still open.</p>")
+    P.append("<div style='margin-bottom:10px'>" + _species_map_select_html(species, species_mat)
+             + " — <span id='species-map-count' class='sub'></span></div>")
+    P.append("<div id='species-map-wrap'>" + _build_species_map_svg() + "</div>")
+    P.append("<div id='species-map-detail' class='species-map-detail'>"
+             "<div class='smd-title'></div><div class='smd-empty'>Hover a region</div></div>")
+    P.append("<script>window.SPECIES_MAP_DATA = "
+             + json.dumps(_species_region_colours(species, species_mat, star_map, mat_map, found), separators=(",", ":"))
+             + ";</script>")
+    P.append("<script>" + _species_map_js() + "</script>")
     P.append("<div class='region-map-clear'></div>")
 
     def rank_key(r):
