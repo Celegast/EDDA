@@ -819,9 +819,21 @@ def db_region_data(conn: sqlite3.Connection, star_map: dict, mat_map: dict):
 
 # ── report ──────────────────────────────────────────────────────────────────
 CSS = """
-body{background:#0c0e16;color:#c8cdda;font:13px/1.5 'Segoe UI',system-ui,sans-serif;margin:0;padding:30px}
+body{background:#0c0e16;color:#c8cdda;font:13px/1.5 'Segoe UI',system-ui,sans-serif;margin:0;padding:0}
+#codex-sidebar{position:fixed;left:0;top:0;bottom:0;width:200px;background:#0a0c14;
+  border-right:1px solid #1e2333;display:flex;flex-direction:column;overflow-y:auto;z-index:100}
+.codex-sidebar-logo{display:flex;align-items:center;gap:8px;padding:16px 14px 14px;
+  border-bottom:1px solid #1e2333}
+.codex-sidebar-logo b{color:#f0c24a;font-size:.98em;line-height:1.3;display:block}
+.codex-sidebar-logo span{display:block;font-size:.72em;color:#8892a8;font-weight:400;margin-top:2px}
+#codex-sidebar a{display:block;padding:9px 14px;color:#9aa3b8;text-decoration:none;font-size:.86em;
+  border-left:3px solid transparent;transition:background .12s,color .12s}
+#codex-sidebar a:hover{background:#161a26;color:#dbe2f0}
+#codex-sidebar a.active{background:#161a26;color:#f0c24a;border-left-color:#f0c24a}
+#codex-main{margin-left:200px;padding:26px 32px 60px;min-width:0}
 h1{color:#e6ebf5;font-size:1.4rem}
-h2{color:#dbe2f0;margin-top:2.2em;border-bottom:1px solid #232838;padding-bottom:.3em}
+h2{color:#dbe2f0;margin-top:2.2em;border-bottom:1px solid #232838;padding-bottom:.3em;scroll-margin-top:14px}
+details.codex-navtarget{scroll-margin-top:14px}
 h3{color:#cdd6ea;margin:.2em 0}
 .sub{color:#8892a8;max-width:82ch}
 a{color:#6fa8ff;text-decoration:none}
@@ -987,6 +999,40 @@ def favicon_data_uri(size=32):
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
+def _codex_nav_js() -> str:
+    """Sidebar scroll-spy + smooth-scroll, mirroring the dashboard's own
+    #sidebar behaviour. Uses a narrow rootMargin band near the top of the
+    viewport rather than dashboard's plain threshold — this report's
+    sections (especially "By region", dozens of collapsibles deep) can run
+    far longer than a viewport, where a broad threshold would keep an
+    early section's link "active" long after it's scrolled out of view."""
+    return """(function(){
+  var links = {};
+  document.querySelectorAll("#codex-sidebar a[href^='#']").forEach(function(a){
+    links[a.getAttribute('href').slice(1)] = a;
+  });
+  function setActive(id){
+    Object.values(links).forEach(function(a){ a.classList.remove('active'); });
+    if (links[id]) links[id].classList.add('active');
+  }
+  var targets = Object.keys(links).map(function(id){ return document.getElementById(id); }).filter(Boolean);
+  var observer = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){ if (e.isIntersecting) setActive(e.target.id); });
+  }, {rootMargin: '-10% 0px -70% 0px'});
+  targets.forEach(function(t){ observer.observe(t); });
+
+  document.querySelectorAll("#codex-sidebar a[href^='#']").forEach(function(a){
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      var t = document.getElementById(a.getAttribute('href').slice(1));
+      if (!t) return;
+      if (t.tagName === 'DETAILS') t.open = true;
+      t.scrollIntoView({behavior: 'smooth'});
+    });
+  });
+}())"""
+
+
 _STATS_FONT_LINK = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
@@ -1004,7 +1050,7 @@ def _stats_section_html(monthly: dict | None, leaderboard: dict | None,
     if not monthly and not leaderboard:
         return ""
 
-    P = ["<h2>Statistics</h2>",
+    P = ["<h2 id='statistics'>Statistics</h2>",
          "<p class='sub'>Community-wide activity pulled from the same CodexEntries.tsv this report is "
          "built from — how many exobiology regional firsts get logged galaxy-wide each month, and who's "
          "logged the most all-time.</p>",
@@ -1433,7 +1479,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
                 if reg not in found.get((sp, col), ()) and spawns_mat(reg, mat):
                     rf_mat_real += 1
 
-    P = [f"<style>{CSS}</style><h1>{pie_logo()}Odyssey Codex Report</h1>"]
+    nav_entries: list[tuple[str, str]] = [("top", "Overview")]
+    P = [f"<h1 id='top'>{pie_logo()}Odyssey Codex Report</h1>"]
     P.append(
         f"<p class='sub'>A colour variant not yet logged in a region is a <b>regional first</b> there; "
         f"one never logged anywhere is a <b>galactic first</b>. Method: Canonn's variant list minus what "
@@ -1463,14 +1510,16 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
             table.append(f"<tr><td>{esc(reg)}</td><td>{esc(sp)}</td><td>{chip(col)} {esc(col)}</td>"
                          f"<td class='sub'>{esc(system)}</td><td class='sub'>{esc(date[:10])}</td></tr>")
         table.append("</table>")
+        nav_entries.append(("your-firsts", "\U0001f3c6 Your regional firsts"))
         if n > LONG_LIST:
-            P.append(f"<details><summary class='h2toggle'>\U0001f3c6 Your regional firsts "
-                     f"({n})</summary>" + intro + "".join(table) + "</details>")
+            P.append(f"<details id='your-firsts' class='codex-navtarget'><summary class='h2toggle'>"
+                     f"\U0001f3c6 Your regional firsts ({n})</summary>" + intro + "".join(table) + "</details>")
         else:
-            P.append(f"<h2>\U0001f3c6 Your regional firsts</h2>" + intro + "".join(table))
+            P.append(f"<h2 id='your-firsts'>\U0001f3c6 Your regional firsts</h2>" + intro + "".join(table))
 
     # ---- ONE galactic-firsts matrix (region-independent) ------------------
-    P.append("<h2>Galactic firsts — the whole-galaxy picture</h2>")
+    nav_entries.append(("galactic-firsts", "Galactic firsts"))
+    P.append("<h2 id='galactic-firsts'>Galactic firsts — the whole-galaxy picture</h2>")
     P.append("<p class='sub'>Every species &times; star type. <b>★ / ?</b> = a variant believed to exist "
              "that <b>nobody has ever logged</b> (players have scanned ~280&nbsp;million systems and still "
              "not found these). A faint chip = a variant that <i>is</i> confirmed somewhere. Blank = no "
@@ -1526,7 +1575,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
 
     # ---- material-related species — the whole-galaxy picture -----------------
     if species_mat:
-        P.append("<h2>Material-related species — the whole-galaxy picture</h2>")
+        nav_entries.append(("material-galactic", "Material-related species"))
+        P.append("<h2 id='material-galactic'>Material-related species — the whole-galaxy picture</h2>")
         P.append("<p class='sub'>Same idea as the star matrix above, but the column is a surface trace "
                  "element instead of a star — these species (Bacterium, Concha, Electricae, Fumerola, "
                  "Fungoida, Osseus, Recepta) key their colour off whichever of six named materials the "
@@ -1558,7 +1608,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         P.append("</table>")
 
     # ---- per-region matrices (regional firsts only)
-    P.append("<h2>By region — regional firsts</h2><p class='sub'>Only species already <b>confirmed to occur "
+    nav_entries.append(("by-region", "By region"))
+    P.append("<h2 id='by-region'>By region — regional firsts</h2><p class='sub'>Only species already <b>confirmed to occur "
              "in the region</b> are in the matrix (their unlogged colours are real firsts). Species never "
              "confirmed there — likely restricted to other spiral arms — are struck through in a footnote "
              "and not counted. Near-universal species not yet confirmed in a region are shown "
@@ -1594,7 +1645,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
     P.append("<div class='region-map-clear'></div>")
 
     # ---- species distribution map (pick a species, see which colours are confirmed where)
-    P.append("<h2>Species distribution map</h2>")
+    nav_entries.append(("species-map", "Species distribution map"))
+    P.append("<h2 id='species-map'>Species distribution map</h2>")
     P.append("<p class='sub'>Pick a species to see which regions have any of its colours confirmed "
              "(community data, same as the matrices above) — amber where at least one is. Hover a "
              "region for exactly which colours and what determines each (star type, or surface "
@@ -1741,7 +1793,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
         P.append("</div></details>")
 
     # ---- by star type ------------------------------------------------------
-    P.append("<h2>By star type — where to point your ship</h2>")
+    nav_entries.append(("by-star-type", "By star type"))
+    P.append("<h2 id='by-star-type'>By star type — where to point your ship</h2>")
     P.append("<p class='sub'>Same data, the other way round: pick the star type you're camped on and see which "
              "regions have the most open entries for it (only species already confirmed present in the region "
              "count). Exotic stars (O / Wolf-Rayet / Herbig Ae/Be) are listed last — bio there is almost "
@@ -1813,7 +1866,8 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
 
     # ---- by material ---------------------------------------------------------
     if species_mat:
-        P.append("<h2>By material — where to land your ship</h2>")
+        nav_entries.append(("by-material", "By material"))
+        P.append("<h2 id='by-material'>By material — where to land your ship</h2>")
         P.append("<p class='sub'>Same idea as the by-star-type view, but for material-related species: pick "
                  "the trace element you're prospecting for and see which regions have the most open entries "
                  "for it (only species already confirmed present in the region count).</p>")
@@ -1869,11 +1923,19 @@ def _render(star_map, mat_map, gaps, found, regions, genus, sp_regions, sp_here,
 
     # ---- statistics (community-wide monthly activity + commander leaderboard)
     stats_html = _stats_section_html(monthly, leaderboard, cmdrs)
+    if stats_html:
+        nav_entries.append(("statistics", "Statistics"))
     P.append(stats_html)
+
+    nav_html = "".join(f"<a href='#{sid}'>{esc(label)}</a>" for sid, label in nav_entries)
+    sidebar = (f"<nav id='codex-sidebar'><div class='codex-sidebar-logo'>{pie_logo(26)}"
+              f"<div><b>Odyssey Codex</b><span>Report</span></div></div>{nav_html}</nav>")
 
     font_link = _STATS_FONT_LINK if stats_html else ""
     out_path.write_text("<!doctype html><meta charset=utf-8><title>Odyssey Codex Report</title>"
-                        f'<link rel="icon" href="{favicon_data_uri()}">{font_link}' + "".join(P),
+                        f'<link rel="icon" href="{favicon_data_uri()}">{font_link}<style>{CSS}</style>'
+                        + sidebar + "<main id='codex-main'>" + "".join(P) + "</main>"
+                        + "<script>" + _codex_nav_js() + "</script>",
                         encoding="utf-8")
     print(f"  wrote {out_path}")
     print(f"  realistic regional firsts: {rf_real:,}   (raw incl. absent species: {rf_raw - rf_exotic:,})")
