@@ -27,6 +27,13 @@ from .config import (
     set_active_commander, set_selected_commanders, set_ui_state,
 )
 
+# The app runs under pythonw.exe (no console of its own). A console-subsystem
+# child — git, pdm, powershell — spawned without this flag makes Windows pop
+# up a new console window for it, which flashes on screen for the process's
+# lifetime. sys.executable (relaunching this same GUI) is pythonw.exe itself,
+# so it never does this and doesn't need the flag.
+_NOWIN = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+
 # ── Colour palette ─────────────────────────────────────────────────────────────
 _BG     = "#0d1117"
 _SURF   = "#161b22"
@@ -209,7 +216,7 @@ def _install_shortcut() -> tuple[bool, str]:
         r = subprocess.run(
             ["powershell", "-NonInteractive",
              "-ExecutionPolicy", "Bypass", "-File", tmp.name],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=15, **_NOWIN,
         )
         if r.returncode == 0:
             try:
@@ -492,6 +499,8 @@ class _App(tk.Tk):
         self._frames:  dict[str, ttk.Frame] = {}
         self._current_task: str | None = None
         self._poll_timers: dict[str, str | None] = {}
+        self._update_available = False
+        self._update_commits = ""
         self._ui = get_ui_state()
         self._build()
         self._refresh_commanders()
@@ -499,6 +508,7 @@ class _App(tk.Tk):
         self._poll()
         if self._widgets["import"]["auto_import"].get():
             self.after(500, lambda: self._run("import"))
+        self.after(1500, lambda: self._run_update_check(silent=True))
 
     # ── Build ──────────────────────────────────────────────────────────────────
 
@@ -570,8 +580,9 @@ class _App(tk.Tk):
                    command=self._restart_qb).pack(side="left", padx=(2, 0))
         self._qb_lbl = ttk.Label(qf, text="", style="Dim.TLabel")
         self._qb_lbl.pack(side="left", padx=8)
-        ttk.Button(qf, text="Check for Updates",
-                   command=self._check_updates).pack(side="right", padx=(4, 0))
+        self._update_btn = ttk.Button(qf, text="Check for Updates",
+                                       command=self._on_update_btn)
+        self._update_btn.pack(side="right", padx=(4, 0))
         ttk.Button(qf, text="Create Desktop Shortcut",
                    command=self._create_shortcut).pack(side="right")
 
@@ -914,39 +925,177 @@ class _App(tk.Tk):
 
     # ── Update check ──────────────────────────────────────────────────────────
 
-    def _check_updates(self) -> None:
-        self._log(f"> EDDA v{_VERSION} — checking for updates…\n", "hdr")
+    def _on_update_btn(self) -> None:
+        """The one button does double duty: a normal check when no update is
+        known yet, or (once one's been found — on startup or a previous
+        click) straight to the confirm-and-apply dialog."""
+        if self._update_available:
+            self._show_update_dialog()
+        else:
+            self._run_update_check(silent=False)
+
+    def _run_update_check(self, silent: bool) -> None:
+        """silent=True (startup) stays quiet unless an update is actually
+        found — no "checking…" spam competing with the auto-import log, and
+        no error noise for users without git set up. A manual click
+        (silent=False) always reports what happened."""
+        if not silent:
+            self._log(f"> EDDA v{_VERSION} — checking for updates…\n", "hdr")
 
         def _go() -> None:
             try:
                 r = subprocess.run(
                     ["git", "fetch", "--quiet"],
                     capture_output=True, text=True, timeout=30,
-                    cwd=str(Path.cwd()),
+                    cwd=str(Path.cwd()), **_NOWIN,
                 )
                 if r.returncode != 0:
-                    self._queue.put(("line",
-                        f"git fetch failed: {r.stderr.strip() or 'unknown error'}\n"))
+                    if not silent:
+                        self._queue.put(("line",
+                            f"git fetch failed: {r.stderr.strip() or 'unknown error'}\n"))
                     return
                 r2 = subprocess.run(
-                    ["git", "log", "HEAD..@{u}", "--oneline"],
+                    ["git", "log", "HEAD..@{u}", "--reverse", "--format=%s"],
                     capture_output=True, text=True, timeout=10,
-                    cwd=str(Path.cwd()),
+                    cwd=str(Path.cwd()), **_NOWIN,
                 )
                 commits = r2.stdout.strip()
                 if commits:
-                    self._queue.put(("line",
-                        f"Updates available:\n{commits}\n"
-                        f"Run update.bat / update.sh to apply.\n"))
+                    self._queue.put(("update_found", commits))
                 else:
-                    self._queue.put(("line", "Already up to date.\n"))
+                    if not silent:
+                        self._queue.put(("line", "Already up to date.\n"))
+                    self._queue.put(("update_none", None))
             except FileNotFoundError:
-                self._queue.put(("line",
-                    "git not found — cannot check for updates.\n"))
+                if not silent:
+                    self._queue.put(("line",
+                        "git not found — cannot check for updates.\n"))
             except Exception as exc:
-                self._queue.put(("line", f"Update check failed: {exc}\n"))
+                if not silent:
+                    self._queue.put(("line", f"Update check failed: {exc}\n"))
 
         threading.Thread(target=_go, daemon=True).start()
+
+    def _on_update_found(self, commits: str) -> None:
+        self._update_available = True
+        self._update_commits = commits
+        self._update_btn.config(text="⬆ Update Available", style="Run.TButton")
+        n = len(commits.splitlines())
+        self._log(f"> Update available ({n} change{'s' if n != 1 else ''}) "
+                  f"— click 'Update Available' to review and apply.\n", "hdr")
+
+    def _on_update_none(self) -> None:
+        """No update found — the button label says so and stays that way
+        (rather than silently reverting) until the next check finds
+        something or is run manually; a second update landing while the
+        panel's still open is unlikely enough not to poll for."""
+        self._update_btn.config(text="✓ Up to date", style="TButton")
+
+    def _show_update_dialog(self) -> None:
+        top = tk.Toplevel(self, bg=_SURF2)
+        top.title("EDDA Update Available")
+        top.resizable(False, False)
+        top.transient(self)
+        top.grab_set()
+
+        tk.Label(top, text="Update available", bg=_SURF2, fg=_TEXT,
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=14, pady=(14, 2))
+        tk.Label(top, text="What's new since your current version:",
+                 bg=_SURF2, fg=_MUTED, font=_FONT_S).pack(anchor="w", padx=14, pady=(0, 8))
+
+        body = tk.Frame(top, bg=_SURF2)
+        body.pack(padx=14, pady=(0, 4), fill="both", expand=True)
+        txt = tk.Text(body, width=64, height=min(16, max(4, len(self._update_commits.splitlines()) + 1)),
+                      bg=_SURF, fg=_TEXT, font=_FONT, relief="flat", wrap="word",
+                      padx=8, pady=6)
+        vsb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=vsb.set)
+        txt.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        for line in self._update_commits.splitlines():
+            txt.insert("end", f"• {line}\n")
+        txt.config(state="disabled")
+
+        btns = tk.Frame(top, bg=_SURF2)
+        btns.pack(fill="x", padx=14, pady=14)
+        ttk.Button(btns, text="Not Now", command=top.destroy).pack(side="right")
+
+        def _go() -> None:
+            top.destroy()
+            self._apply_update()
+
+        ttk.Button(btns, text="Update Now", style="Run.TButton",
+                   command=_go).pack(side="right", padx=(0, 8))
+
+    def _apply_update(self) -> None:
+        # _update_available stays True until we actually know the pull/install
+        # succeeded — if either fails, the repo is presumably still behind,
+        # so the button should go back to an immediately-retryable state
+        # rather than quietly reverting to "no update known".
+        self._update_btn.config(text="Updating…", state="disabled")
+        self._log(f"> EDDA v{_VERSION} — applying update…\n", "hdr")
+
+        def _go() -> None:
+            try:
+                r = subprocess.run(
+                    ["git", "pull"], capture_output=True, text=True,
+                    timeout=60, cwd=str(Path.cwd()), **_NOWIN,
+                )
+                self._queue.put(("line", r.stdout))
+                if r.returncode != 0:
+                    self._queue.put(("line", f"git pull failed:\n{r.stderr}\n"))
+                    self._queue.put(("update_failed", None))
+                    return
+                try:
+                    have_pdm = subprocess.run(
+                        ["pdm", "--version"], capture_output=True, timeout=10, **_NOWIN,
+                    ).returncode == 0
+                except FileNotFoundError:
+                    have_pdm = False
+                pdm = ["pdm"] if have_pdm else [sys.executable, "-m", "pdm"]
+                r2 = subprocess.run(
+                    pdm + ["install"], capture_output=True, text=True,
+                    timeout=300, cwd=str(Path.cwd()), **_NOWIN,
+                )
+                self._queue.put(("line", r2.stdout))
+                if r2.returncode != 0:
+                    self._queue.put(("line", f"Dependency sync failed:\n{r2.stderr}\n"))
+                    self._queue.put(("update_failed", None))
+                    return
+                self._queue.put(("update_done", None))
+            except FileNotFoundError as exc:
+                self._queue.put(("line", f"Update failed — {exc}\n"))
+                self._queue.put(("update_failed", None))
+            except Exception as exc:
+                self._queue.put(("line", f"Update failed: {exc}\n"))
+                self._queue.put(("update_failed", None))
+
+        threading.Thread(target=_go, daemon=True).start()
+
+    def _on_update_failed(self) -> None:
+        """git pull / pdm install didn't finish cleanly — the update is
+        presumably still pending, so put the button back in its
+        immediately-retryable "found an update" state rather than silently
+        reverting to "no update known"."""
+        self._update_btn.config(text="⬆ Update Available", style="Run.TButton",
+                                state="normal")
+
+    def _on_update_done(self) -> None:
+        self._update_available = False
+        self._update_btn.config(text="Check for Updates", style="TButton", state="normal")
+        self._log("> Update applied. Restart EDDA to run the new version.\n", "ok")
+        if messagebox.askyesno("EDDA — Update applied",
+                               "Update installed successfully.\n\n"
+                               "Restart EDDA now to run the new version?"):
+            try:
+                subprocess.Popen([sys.executable, "-c",
+                                  "from edda.gui import main; main()"],
+                                 cwd=str(Path.cwd()))
+            except Exception as exc:
+                messagebox.showerror("EDDA", f"Couldn't restart automatically: {exc}\n"
+                                             "Please close and reopen EDDA manually.")
+                return
+            self.destroy()
 
     # ── Desktop shortcut ──────────────────────────────────────────────────────
 
@@ -978,7 +1127,7 @@ class _App(tk.Tk):
                      "-ErrorAction SilentlyContinue | "
                      "Select-Object -ExpandProperty OwningProcess | "
                      "ForEach-Object { Stop-Process -Id $_ -Force }"],
-                    capture_output=True, timeout=10,
+                    capture_output=True, timeout=10, **_NOWIN,
                 )
             except Exception:
                 pass
@@ -1109,6 +1258,14 @@ class _App(tk.Tk):
                         os.startfile(data)
                     else:
                         webbrowser.open(p.resolve().as_uri())
+                elif kind == "update_found":
+                    self._on_update_found(data)
+                elif kind == "update_none":
+                    self._on_update_none()
+                elif kind == "update_done":
+                    self._on_update_done()
+                elif kind == "update_failed":
+                    self._on_update_failed()
                 else:
                     self._log(data)
         except queue.Empty:
